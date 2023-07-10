@@ -328,7 +328,7 @@ class NFC:
                     self.update_timer_map(p.packet_type, seq=p.seq, packet=None, op=2)
                     
 
-    def start(self):
+    def start_recv(self):
         self.started = True
         recv_th = threading.Thread(target=self.recv, args=())
         recv_th.start()
@@ -340,7 +340,7 @@ class NFC:
         rt_th.start()
 
 
-    def stop(self):
+    def stop_recv(self):
         self.started = False
 
 
