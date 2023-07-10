@@ -352,12 +352,7 @@ class NFC:
                 print("The rx queue is empty")
                 return None
     
-    """
-    :param op:
-            0: add
-            1: remove
-            2: update
-    """
+   
     def update_timer_map(self, key, seq, packet, op):
         if op == 0:
             print(f'INFO: add element [{key}][{packet.seq}] to timer_map')
