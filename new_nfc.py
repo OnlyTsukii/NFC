@@ -268,9 +268,9 @@ class NFC:
                 return None
 
 
-    def rx_map_contains(self, key, seq, type) -> bool:
+    def rx_map_contains(self, key, seq, packet_type) -> bool:
         with self.mutex2:
             if self.rx_map.get(key) is None or len(self.rx_map.get(key)) == 0:
                 return False
             return self.rx_map[key][-1].seq == seq and \
-                self.rx_map[key][-1].packet_type == type
+                self.rx_map[key][-1].packet_type == packet_type
