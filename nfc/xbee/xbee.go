@@ -129,6 +129,7 @@ func (d *Data) GetData() []byte {
 
 func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 	x.Mutex.Lock()
+	defer x.Mutex.Unlock()
 	x.Seq = (x.Seq + 1) % 256
 	fragments := GetFragments(x.Seq, data)
 	// fmt.Println(len(fragments))
@@ -148,7 +149,6 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 		// fmt.Printf("%s:Xbee send packet: no %d seq %d len %d \n", x.Mac, frag.No, frag.Seq, len(frag.Data))
 	}
 	// fmt.Println(time.Since(cur))
-	x.Mutex.Unlock()
 	return true
 }
 
