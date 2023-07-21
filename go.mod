@@ -1,9 +1,8 @@
-module nfc
+module ccl/go
 
 go 1.19
 
 require (
-	github.com/DataDog/go-python3 v0.0.0-20211102160307-40adc605f1fe
 	go.bug.st/serial v1.5.0
 )
 

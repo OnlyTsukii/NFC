@@ -1,10 +1,8 @@
-package main
+package xbee
 
 import (
 	"encoding/hex"
 	"fmt"
-	"strconv"
-	"strings"
 )
 
 func print(bs []byte) {
@@ -12,40 +10,6 @@ func print(bs []byte) {
 		fmt.Printf("%02x", v)
 	}
 	fmt.Println()
-}
-
-func ip2hex(ip string) string {
-	parts := strings.Split(ip, ".")
-	hexParts := make([]string, len(parts))
-	for i, part := range parts {
-		decimal, err := strconv.ParseInt(part, 10, 64)
-		if err != nil {
-			fmt.Println("Invalid decimal string")
-			return ""
-		}
-		hexStr := strconv.FormatInt(decimal, 16)
-		if len(hexStr) == 1 {
-			hexStr = "0" + hexStr
-		}
-		hexParts[i] = hexStr
-	}
-	return strings.Join(hexParts, "")
-}
-
-func hex2ip(hex string) string {
-	// fmt.Println(hex)
-	var ipParts []string
-	for len(hex) > 0 {
-		decimal, err := strconv.ParseInt(hex[:2], 16, 64)
-		if err != nil {
-			fmt.Println(err)
-			return ""
-		}
-		decimalStr := strconv.FormatInt(decimal, 10)
-		ipParts = append(ipParts, decimalStr)
-		hex = hex[2:]
-	}
-	return strings.Join(ipParts, ".")
 }
 
 func ATCmdFrameToBytes(f *ATCmdFrame) []byte {

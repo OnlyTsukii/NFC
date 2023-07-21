@@ -1,4 +1,4 @@
-package main
+package xbee
 
 import (
 	"errors"
@@ -134,10 +134,14 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 	// fmt.Println(len(fragments))
 	// cur := time.Now()
 	for _, frag := range fragments {
+		count := 0
 		for x.Started {
 			err := x.SendData(remoteAddr, frag.Encode())
+			count++
 			if err == nil {
 				break
+			} else if count == 5 {
+				return false
 			}
 			time.Sleep(200 * time.Millisecond)
 		}

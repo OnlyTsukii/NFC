@@ -1,9 +1,11 @@
-package main
+package nfc
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 type Packet struct {
@@ -73,4 +75,38 @@ func DecodePacket(data []byte) (*Packet, error) {
 func (p *Packet) String() string {
 	return fmt.Sprintf("Packet(seq=%d, packetType=%d, srcMAC=%s, destMAC=%s, srcIP=%s, destIP=%s, len(data)=%v)",
 		p.Seq, p.PacketType, p.SrcMac, p.DestMac, p.SrcIP, p.DestIP, len(p.Data))
+}
+
+func ip2hex(ip string) string {
+	parts := strings.Split(ip, ".")
+	hexParts := make([]string, len(parts))
+	for i, part := range parts {
+		decimal, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			fmt.Println("Invalid decimal string")
+			return ""
+		}
+		hexStr := strconv.FormatInt(decimal, 16)
+		if len(hexStr) == 1 {
+			hexStr = "0" + hexStr
+		}
+		hexParts[i] = hexStr
+	}
+	return strings.Join(hexParts, "")
+}
+
+func hex2ip(hex string) string {
+	// fmt.Println(hex)
+	var ipParts []string
+	for len(hex) > 0 {
+		decimal, err := strconv.ParseInt(hex[:2], 16, 64)
+		if err != nil {
+			fmt.Println(err)
+			return ""
+		}
+		decimalStr := strconv.FormatInt(decimal, 10)
+		ipParts = append(ipParts, decimalStr)
+		hex = hex[2:]
+	}
+	return strings.Join(ipParts, ".")
 }

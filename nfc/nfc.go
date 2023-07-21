@@ -1,8 +1,8 @@
-package main
+package nfc
 
 import (
+	"ccl/go/nfc/xbee"
 	"fmt"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -120,7 +120,7 @@ func (n *NFC) Open() bool {
 	if n.DevIDF() {
 		switch n.DevType {
 		case "Xbee":
-			xbee, err := NewXbee(n.DevPort, 115200)
+			xbee, err := xbee.NewXbee(n.DevPort, 115200)
 			if err != nil {
 				fmt.Printf("Error occurred when opening the serial port: %v \n", err)
 				return false
@@ -188,7 +188,7 @@ func (n *NFC) Send(data []byte, destIP string) bool {
 		for _, keyToRemove := range keysToRemove {
 			delete(n.TxMap, keyToRemove)
 		}
-		fmt.Println("clear txmap", len(n.TxMap))
+		// fmt.Println("clear txmap", len(n.TxMap))
 	}
 	n.Mutex.Unlock()
 
@@ -444,27 +444,4 @@ func (n *NFC) Close() {
 	n.Started = false
 	close(n.stopCh)
 	n.wg.Wait()
-}
-
-func main() {
-	file, err := os.Open("8KB.txt")
-	if err != nil {
-		fmt.Printf("Open file failed：%s\n", err)
-		return
-	}
-	defer file.Close()
-	data := make([]byte, 5000)
-
-	n, err := file.Read(data)
-	if err != nil {
-		fmt.Printf("Read file failed：%s\n", err)
-	}
-	data = data[:n]
-
-	nfc := NewNFC("192.168.0.1")
-	nfc.Open()
-	nfc.Start()
-	nfc.Send(data, "192.168.0.2")
-	for {
-	}
 }
