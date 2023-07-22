@@ -10,9 +10,9 @@ import (
 
 const (
 	DELIMITER          = 0x7e
-	MAX_RECV_PACKET_CH = 40
-	MAX_RECV_RESP_CH   = 40
-	MAX_RECV_BYTE_CH   = 10000
+	MAX_RECV_PACKET_CH = 100
+	MAX_RECV_RESP_CH   = 100
+	MAX_RECV_BYTE_CH   = 30000
 )
 
 var STOP_CMD = []byte{0x7e, 0x00, 0x04, 0x09, 0x01, 0x41, 0x50, 0x64}
@@ -82,7 +82,9 @@ func (reader *Reader) ReadFrame() {
 				frame = append(frame, reader.ReadBytes(int(frame[LEN_END_OFFSET])+1)...)
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// print(frame)
+				// if len(frame) > 20 {
+				// 	fmt.Println(len(frame))
+				// }
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE || frame[FRAME_TYPE_OFFSET] == TRANSMIT_STATUS {
 					select {
 					case reader.RecvRespCh <- temp:

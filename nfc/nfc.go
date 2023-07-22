@@ -14,12 +14,12 @@ const (
 	BCST      = 0
 	ADDR_REQ  = 1
 	ADDR_RESP = 2
-	P2P       = 3
-	RT_REQ    = 4
-	RT_RESP   = 5
+	RT_REQ    = 3
+	RT_RESP   = 4
+	P2P       = 5
 	ACK       = 6
 
-	TRANSMISSION_TIMEOUT = 10
+	TRANSMISSION_TIMEOUT = 30
 
 	BCST_ADDR = "000000000000FFFF"
 	BCST_IP   = "255.255.255.255"
@@ -90,7 +90,7 @@ func NewNFC(ip string) *NFC {
 		Pending:  make(map[string][]PendingData),
 		TxMap:    make(map[int]Packet),
 		RxMap:    make(map[string][]Packet),
-		RxQueue:  make(chan Packet, 20),
+		RxQueue:  make(chan Packet, 3),
 		RtQueue:  make(chan Packet, 20),
 		RtMap:    make(map[string][]int),
 		RxDataCh: make(chan []byte, 64),
@@ -157,6 +157,7 @@ func (n *NFC) Send(data []byte, destIP string) bool {
 			n.Mutex.Unlock()
 			fmt.Printf("INFO: send P2P %v\n", p)
 			res = n.Device.SendPacket(p.Encode(), destMac)
+			n.UpdateTimerMap(P2P, 0, p, 0)
 		} else {
 			p := NewPacket(n.Seq, ADDR_REQ, n.Mac, BCST_ADDR, n.IP, destIP, []byte([]byte("None")))
 			n.Mutex1.Lock()
@@ -164,8 +165,8 @@ func (n *NFC) Send(data []byte, destIP string) bool {
 				n.Pending[destIP] = make([]PendingData, 0)
 				n.Pending[destIP] = append(n.Pending[destIP], PendingData{p.Seq, data})
 				fmt.Printf("INFO: send ADDR_REQ %v\n", p)
-				n.UpdateTimerMap(ADDR_REQ, 0, p, 0)
 				res = n.Device.SendPacket(p.Encode(), BCST_ADDR)
+				n.UpdateTimerMap(ADDR_REQ, 0, p, 0)
 			} else {
 				n.Pending[destIP] = append(n.Pending[destIP], PendingData{p.Seq, data})
 				res = true
@@ -173,25 +174,7 @@ func (n *NFC) Send(data []byte, destIP string) bool {
 			n.Mutex1.Unlock()
 		}
 	}
-
-	// n.Seq = (n.Seq + 1) % 256
-
-	n.Mutex.Lock()
-	if len(n.TxMap) == 32 {
-		keysToRemove := []int{}
-		for key := range n.TxMap {
-			keysToRemove = append(keysToRemove, key)
-			if len(keysToRemove) == 16 {
-				break
-			}
-		}
-		for _, keyToRemove := range keysToRemove {
-			delete(n.TxMap, keyToRemove)
-		}
-		// fmt.Println("clear txmap", len(n.TxMap))
-	}
-	n.Mutex.Unlock()
-
+	time.Sleep(1000 * time.Millisecond)
 	return res
 }
 
@@ -208,11 +191,13 @@ func (n *NFC) SendPendingData(destIP string) {
 		n.Mutex.Unlock()
 		fmt.Printf("INFO: send pending data %v\n", p)
 		n.Device.SendPacket(p.Encode(), destMac)
+		n.UpdateTimerMap(P2P, 0, p, 0)
 	}
 }
 
 func (n *NFC) SendRtReq(seq int, destMac string, destIP string) {
 	p := NewPacket(seq, RT_REQ, n.Mac, destMac, n.IP, destIP, []byte("None"))
+	fmt.Printf("INFO: received a disorder packet, send RT_REQ %v\n", p)
 	n.UpdateTimerMap(RT_REQ, 0, p, 0)
 	n.Device.SendPacket(p.Encode(), p.DestMac)
 }
@@ -221,15 +206,7 @@ func (n *NFC) Receiver() {
 	defer n.wg.Done()
 	for n.Started {
 		data, err := n.Device.ReceivePacket()
-		if err != nil {
-			p, err := DecodePacket(data)
-			if err == nil {
-				p = NewPacket(p.Seq, RT_REQ, p.DestMac, p.SrcMac, p.DestIP, p.SrcIP, []byte("None"))
-				n.RtQueue <- *p
-			} else {
-				continue
-			}
-		} else {
+		if err == nil {
 			p, err := DecodePacket(data)
 			if err != nil {
 				continue
@@ -244,10 +221,19 @@ func (n *NFC) PacketHandler() {
 	for n.Started {
 		select {
 		case p := <-n.RxQueue:
-			if p.PacketType == RT_REQ {
+			if p.PacketType == ACK {
+				fmt.Printf("INFO: received a ACK for [%v]\n", p.Seq)
+				n.UpdateTimerMap(P2P, p.Seq, nil, 1)
+				n.Mutex.Lock()
+				delete(n.TxMap, p.Seq)
+				n.Mutex.Unlock()
+			} else if p.PacketType == RT_REQ {
+				if _, ok := n.TxMap[p.Seq]; !ok {
+					continue
+				}
 				p := NewPacket(p.Seq, RT_RESP, p.DestMac, p.SrcMac, p.DestIP, p.SrcIP, n.TxMap[p.Seq].Data)
-				n.Device.SendPacket(p.Encode(), p.DestMac)
 				fmt.Printf("INFO: received a RT_REQ packet for seq:[%d], send RT_RESP %v\n", p.Seq, p)
+				n.Device.SendPacket(p.Encode(), p.DestMac)
 			} else if p.PacketType == RT_RESP {
 				fmt.Printf("INFO: received a RT_RESP %v\n", p.String())
 				n.UpdateTimerMap(RT_REQ, p.Seq, nil, 1)
@@ -267,33 +253,40 @@ func (n *NFC) PacketHandler() {
 			} else if p.PacketType == ADDR_RESP {
 				fmt.Printf("INFO: received a ADDR_RESP packet, send all the pending data\n")
 				ADDR_LIST[p.SrcIP] = p.SrcMac
-				n.UpdateTimerMap(ADDR_REQ, p.Seq, nil, 1)
 				n.SendPendingData(p.SrcIP)
+				n.UpdateTimerMap(ADDR_REQ, p.Seq, nil, 1)
 			} else if n.NextSeq[p.SrcMac] != p.Seq {
 				seq := n.NextSeq[p.SrcMac]
 				cntu := false
-				for v := range n.RtMap[p.SrcMac] {
-					if v == seq {
-						cntu = true
-						break
+				for key := range n.RtMap {
+					for _, v := range n.RtMap[key] {
+						if v == seq {
+							cntu = true
+							break
+						}
 					}
 				}
-				n.InsertAndSortPacket(p.SrcIP, p)
+				if !n.InsertAndSortPacket(p.SrcIP, p) {
+					p := NewPacket(p.Seq, ACK, n.Mac, p.SrcMac, n.IP, p.SrcIP, []byte("None"))
+					n.Device.SendPacket(p.Encode(), p.DestMac)
+				} else {
+					fmt.Printf("INFO: received a disorder packet, add to RxMap %v\n", p.String())
+				}
 				n.SetNextSeq(p.SrcIP, p.SrcMac)
 				if !cntu {
-					fmt.Printf("INFO: received a disorder packet, send RT_REQ %v\n", p)
-					n.RtMap[p.SrcMac] = append(n.RtMap[p.SrcMac], p.Seq)
+					n.RtMap[p.SrcMac] = append(n.RtMap[p.SrcMac], seq)
 					n.SendRtReq(n.NextSeq[p.SrcMac], p.SrcMac, p.SrcIP)
 					continue
 				}
-				fmt.Printf("INFO: received a disorder packet, add to RxMap %v\n", p)
 			} else {
 				n.InsertAndSortPacket(p.SrcIP, p)
 				n.SetNextSeq(p.SrcIP, p.SrcMac)
 				if p.PacketType == P2P {
-					fmt.Printf("INFO: received a P2P packet %v\n", p.String())
+					p := NewPacket(p.Seq, ACK, n.Mac, p.SrcMac, n.IP, p.SrcIP, []byte("None"))
+					fmt.Printf("INFO: received a P2P packet, send ACK %v\n", p.String())
+					n.Device.SendPacket(p.Encode(), p.DestMac)
 				} else {
-					fmt.Printf("INFO: received a BCST packet %v\n", p.String())
+					fmt.Printf("INFO: received a BCST %v\n", p.String())
 				}
 			}
 		case <-n.stopCh:
@@ -322,13 +315,9 @@ func (n *NFC) Retransmitter() {
 	for n.Started {
 		select {
 		case p := <-n.RtQueue:
+			fmt.Printf("INFO: send retransmission %v\n", p.String())
+			n.Device.SendPacket(p.Encode(), p.DestMac)
 			n.UpdateTimerMap(p.PacketType, p.Seq, nil, 2)
-			fmt.Printf("INFO: send rt %v\n", p.String())
-			if p.DestMac == BCST_ADDR {
-				n.Device.SendPacket(p.Encode(), BCST_ADDR)
-			} else {
-				n.Device.SendPacket(p.Encode(), p.DestMac)
-			}
 		case <-n.stopCh:
 			return
 		}
@@ -338,6 +327,7 @@ func (n *NFC) Retransmitter() {
 func (n *NFC) PushData() {
 	defer n.wg.Done()
 	for n.Started {
+		n.Mutex2.Lock()
 		for key := range n.RxMap {
 			for _, v := range n.RxMap[key] {
 				if n.SeqMap[key] == v.Seq {
@@ -348,6 +338,8 @@ func (n *NFC) PushData() {
 				}
 			}
 		}
+		n.Mutex2.Unlock()
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -366,18 +358,18 @@ func (n *NFC) SetNextSeq(srcIP string, srcMac string) {
 	n.NextSeq[srcMac] = next
 }
 
-func (n *NFC) InsertAndSortPacket(key string, packet Packet) {
+func (n *NFC) InsertAndSortPacket(key string, packet Packet) bool {
 	n.Mutex2.Lock()
 	defer n.Mutex2.Unlock()
 
 	packets := n.RxMap[key]
 	if packets == nil {
 		n.RxMap[key] = []Packet{packet}
-		return
+		return true
 	}
 	for _, v := range packets {
 		if v.Seq == packet.Seq {
-			return
+			return false
 		}
 	}
 	n.RxMap[key] = append(packets, packet)
@@ -385,16 +377,17 @@ func (n *NFC) InsertAndSortPacket(key string, packet Packet) {
 		return n.RxMap[key][i].Seq < n.RxMap[key][j].Seq
 	})
 	for _, v := range n.RxMap[key] {
-		fmt.Print(v.Seq)
+		fmt.Printf("%02x ", v.Seq)
 	}
 	fmt.Println()
+	return true
 }
 
 func (n *NFC) UpdateTimerMap(key int, seq int, packet *Packet, op int) {
 	n.Mutex3.Lock()
 	defer n.Mutex3.Unlock()
 	if op == 0 {
-		fmt.Printf("INFO: add element [%d][%d] to timer_map\n", key, packet.Seq)
+		// fmt.Printf("INFO: add element [%d][%d] to timer_map\n", key, packet.Seq)
 		if n.TimerMap[key] == nil {
 			n.TimerMap[key] = []TimerData{}
 		}
@@ -412,10 +405,10 @@ func (n *NFC) UpdateTimerMap(key int, seq int, packet *Packet, op int) {
 		return
 	}
 	if op == 1 {
-		fmt.Printf("INFO: remove element [%d][%d] from timer_map\n", key, n.TimerMap[key][index].Seq)
+		// fmt.Printf("INFO: remove element [%d][%d] from timer_map\n", key, n.TimerMap[key][index].Seq)
 		n.TimerMap[key] = append(n.TimerMap[key][:index], n.TimerMap[key][index+1:]...)
 	} else if op == 2 {
-		fmt.Printf("INFO: update element [%d][%d]\n", key, n.TimerMap[key][index].Seq)
+		// fmt.Printf("INFO: update element [%d][%d]\n", key, n.TimerMap[key][index].Seq)
 		n.TimerMap[key][index].Timeout = n.Timeout
 	}
 }

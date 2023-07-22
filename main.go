@@ -4,6 +4,7 @@ import (
 	"ccl/go/nfc"
 	"fmt"
 	"os"
+	"time"
 )
 
 func main() {
@@ -13,7 +14,7 @@ func main() {
 		return
 	}
 	defer file.Close()
-	data := make([]byte, 5000)
+	data := make([]byte, 1024)
 
 	n, err := file.Read(data)
 	if err != nil {
@@ -24,7 +25,15 @@ func main() {
 	nfc := nfc.NewNFC("192.168.0.1")
 	nfc.Open()
 	nfc.Start()
-	nfc.Send(data, "192.168.0.2")
+
+	time.Sleep(8 * time.Second)
+	for i := 4; i < 26; i++ {
+		if i%5 == 0 {
+			nfc.Send(data, "255.255.255.255")
+		} else {
+			nfc.Send(data, "192.168.0.2")
+		}
+	}
 	for {
 	}
 }

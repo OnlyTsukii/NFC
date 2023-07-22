@@ -146,7 +146,6 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
-		// fmt.Printf("%s:Xbee send packet: no %d seq %d len %d \n", x.Mac, frag.No, frag.Seq, len(frag.Data))
 	}
 	// fmt.Println(time.Since(cur))
 	return true
@@ -178,10 +177,12 @@ func (x *Xbee) ReceivePacket() ([]byte, error) {
 				if kv[1] == 0 {
 					kv[0]++
 				}
-			} else if kv[0] >= frag.No && kv[1] >= frag.Seq {
-				continue
-			} else {
-				return nil, errors.New("received a disorder fragment")
+			} else if kv[0] >= frag.No {
+				if kv[1] >= frag.Seq {
+					continue
+				} else {
+					return nil, errors.New("received a disorder fragment")
+				}
 			}
 		}
 		index := fmt.Sprintf("%s:%d", remoteAddr, frag.No)
