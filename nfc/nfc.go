@@ -14,12 +14,10 @@ const (
 	BCST      = 0
 	ADDR_REQ  = 1
 	ADDR_RESP = 2
-	RT_REQ    = 3
-	RT_RESP   = 4
-	P2P       = 5
-	ACK       = 6
+	P2P       = 3
+	ACK       = 4
 
-	TRANSMISSION_TIMEOUT = 30
+	TRANSMISSION_TIMEOUT = 15
 
 	BCST_ADDR = "000000000000FFFF"
 	BCST_IP   = "255.255.255.255"
@@ -42,68 +40,58 @@ type Device interface {
 	Close()
 }
 
-type PendingData struct {
-	Seq  int
-	Data []byte
+type TimerData struct {
+	Packet  Packet
+	Timeout int
 }
 
-type TimerData struct {
-	Seq     int
-	Timeout int
-	Packet  Packet
+type TxData struct {
+	data   []byte
+	destIP string
 }
 
 type NFC struct {
-	DevType  string
-	DevPort  string
-	Device   Device
-	Mac      string
-	Seq      int
-	NextSeq  map[string]int
-	IP       string
-	Pending  map[string][]PendingData
-	TxMap    map[int]Packet
-	RxMap    map[string][]Packet
-	RtMap    map[string][]int
-	RxQueue  chan Packet
-	RtQueue  chan Packet
-	RxDataCh chan []byte
-	SeqMap   map[string]int
-	Sending  bool
-	Started  bool
-	TimerMap map[int][]TimerData
-	Timeout  int
-	stopCh   chan struct{}
+	DevType     string
+	DevPort     string
+	Device      Device
+	Mac         string
+	Seq         int
+	IP          string
+	TxMap       map[int]Packet
+	RxMap       map[string][]Packet
+	RtMap       map[string][]int
+	Txqueue     chan TxData
+	RtQueue     chan Packet
+	AckQueue    chan Packet
+	DataQueue   chan Packet
+	RxDataCh    chan []byte
+	Started     bool
+	TimerPacket TimerData
+	stopCh      chan struct{}
 
-	wg sync.WaitGroup
-
+	wg     sync.WaitGroup
 	Mutex  sync.Mutex
-	Mutex1 sync.Mutex
 	Mutex2 sync.Mutex
-	Mutex3 sync.Mutex
 }
 
 func NewNFC(ip string) *NFC {
 	return &NFC{
-		IP:       ip,
-		Seq:      -1,
-		Pending:  make(map[string][]PendingData),
-		TxMap:    make(map[int]Packet),
-		RxMap:    make(map[string][]Packet),
-		RxQueue:  make(chan Packet, 3),
-		RtQueue:  make(chan Packet, 20),
-		RtMap:    make(map[string][]int),
-		RxDataCh: make(chan []byte, 64),
-		SeqMap:   make(map[string]int),
-		NextSeq:  make(map[string]int),
-		TimerMap: make(map[int][]TimerData),
-		stopCh:   make(chan struct{}),
-		Started:  false,
-		Timeout:  TRANSMISSION_TIMEOUT,
+		IP:        ip,
+		Seq:       -1,
+		TxMap:     make(map[int]Packet),
+		RxMap:     make(map[string][]Packet),
+		Txqueue:   make(chan TxData, 64),
+		DataQueue: make(chan Packet, 3),
+		AckQueue:  make(chan Packet, 3),
+		RtQueue:   make(chan Packet, 20),
+		RtMap:     make(map[string][]int),
+		RxDataCh:  make(chan []byte, 64),
+		stopCh:    make(chan struct{}),
+		Started:   false,
 	}
 }
 
-func (n *NFC) DevIDF() bool {
+func DevIDF(n *NFC) bool {
 	portList, _ := enumerator.GetDetailedPortsList()
 	for _, port := range portList {
 		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
@@ -117,7 +105,7 @@ func (n *NFC) DevIDF() bool {
 }
 
 func (n *NFC) Open() bool {
-	if n.DevIDF() {
+	if DevIDF(n) {
 		switch n.DevType {
 		case "Xbee":
 			xbee, err := xbee.NewXbee(n.DevPort, 115200)
@@ -138,71 +126,74 @@ func (n *NFC) Open() bool {
 	}
 }
 
-func (n *NFC) Send(data []byte, destIP string) bool {
-	res := false
-	n.Seq = (n.Seq + 1) % 256
+func (n *NFC) Send(data []byte, destIP string) {
+	n.Txqueue <- TxData{data, destIP}
+}
 
-	if destIP == BCST_IP {
-		p := NewPacket(n.Seq, BCST, n.Mac, BCST_ADDR, n.IP, destIP, data)
-		n.Mutex.Lock()
-		n.TxMap[n.Seq] = *p
-		n.Mutex.Unlock()
-		fmt.Printf("INFO: send BCST %v\n", p)
-		res = n.Device.SendPacket(p.Encode(), BCST_ADDR)
-	} else {
-		if destMac, ok := ADDR_LIST[destIP]; ok {
-			p := NewPacket(n.Seq, P2P, n.Mac, destMac, n.IP, destIP, data)
-			n.Mutex.Lock()
-			n.TxMap[n.Seq] = *p
-			n.Mutex.Unlock()
-			fmt.Printf("INFO: send P2P %v\n", p)
-			res = n.Device.SendPacket(p.Encode(), destMac)
-			n.UpdateTimerMap(P2P, 0, p, 0)
-		} else {
-			p := NewPacket(n.Seq, ADDR_REQ, n.Mac, BCST_ADDR, n.IP, destIP, []byte([]byte("None")))
-			n.Mutex1.Lock()
-			if _, ok := n.Pending[destIP]; !ok {
-				n.Pending[destIP] = make([]PendingData, 0)
-				n.Pending[destIP] = append(n.Pending[destIP], PendingData{p.Seq, data})
-				fmt.Printf("INFO: send ADDR_REQ %v\n", p)
-				res = n.Device.SendPacket(p.Encode(), BCST_ADDR)
-				n.UpdateTimerMap(ADDR_REQ, 0, p, 0)
+func Sender(n *NFC) {
+	defer n.wg.Done()
+
+	for n.Started {
+		select {
+		case tx := <-n.Txqueue:
+			n.Seq = (n.Seq + 1) % 256
+
+			if tx.destIP == BCST_IP {
+				p := NewPacket(n.Seq, BCST, n.Mac, BCST_ADDR, n.IP, tx.destIP, tx.data)
+				n.Device.SendPacket(p.Encode(), BCST_ADDR)
+				fmt.Printf("INFO: send BCST %v\n", p.String())
 			} else {
-				n.Pending[destIP] = append(n.Pending[destIP], PendingData{p.Seq, data})
-				res = true
+				if destMac, ok := ADDR_LIST[tx.destIP]; ok {
+					p := NewPacket(n.Seq, P2P, n.Mac, destMac, n.IP, tx.destIP, tx.data)
+					n.Device.SendPacket(p.Encode(), destMac)
+					fmt.Printf("INFO: send P2P %v\n", p.String())
+					n.Mutex.Lock()
+					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
+					n.Mutex.Unlock()
+					WaitingForAck(n, p)
+				} else {
+					p := NewPacket(n.Seq, ADDR_REQ, n.Mac, BCST_ADDR, n.IP, tx.destIP, []byte([]byte("None")))
+					n.Device.SendPacket(p.Encode(), BCST_ADDR)
+					fmt.Printf("INFO: send ADDR_REQ %v\n", p.String())
+					n.Mutex.Lock()
+					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
+					n.Mutex.Unlock()
+					WaitingForAck(n, p)
+
+					p = NewPacket(n.Seq, P2P, n.Mac, ADDR_LIST[tx.destIP], n.IP, tx.destIP, tx.data)
+					n.Device.SendPacket(p.Encode(), p.DestMac)
+					fmt.Printf("INFO: send P2P %v\n", p.String())
+					n.Mutex.Lock()
+					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
+					n.Mutex.Unlock()
+					WaitingForAck(n, p)
+				}
 			}
-			n.Mutex1.Unlock()
+		case <-n.stopCh:
+			return
 		}
 	}
-	time.Sleep(1000 * time.Millisecond)
-	return res
 }
 
-func (n *NFC) SendPendingData(destIP string) {
-	n.Mutex1.Lock()
-	packets := n.Pending[destIP]
-	destMac := ADDR_LIST[destIP]
-	delete(n.Pending, destIP)
-	n.Mutex1.Unlock()
-	for _, pd := range packets {
-		p := NewPacket(pd.Seq, P2P, n.Mac, destMac, n.IP, destIP, pd.Data)
-		n.Mutex.Lock()
-		n.TxMap[p.Seq] = *p
-		n.Mutex.Unlock()
-		fmt.Printf("INFO: send pending data %v\n", p)
-		n.Device.SendPacket(p.Encode(), destMac)
-		n.UpdateTimerMap(P2P, 0, p, 0)
+func WaitingForAck(n *NFC, p *Packet) {
+	for {
+		ack := <-n.AckQueue
+		if ack.Seq == p.Seq {
+			if ack.PacketType == ACK {
+				fmt.Printf("INFO: received a ACK for [%v]\n", p.Seq)
+			} else {
+				fmt.Printf("INFO: received a ADDR_RESP for [%v]\n", p.Seq)
+				ADDR_LIST[ack.SrcIP] = ack.SrcMac
+			}
+			n.Mutex.Lock()
+			n.TimerPacket.Timeout = 2147483647
+			n.Mutex.Unlock()
+			break
+		}
 	}
 }
 
-func (n *NFC) SendRtReq(seq int, destMac string, destIP string) {
-	p := NewPacket(seq, RT_REQ, n.Mac, destMac, n.IP, destIP, []byte("None"))
-	fmt.Printf("INFO: received a disorder packet, send RT_REQ %v\n", p)
-	n.UpdateTimerMap(RT_REQ, 0, p, 0)
-	n.Device.SendPacket(p.Encode(), p.DestMac)
-}
-
-func (n *NFC) Receiver() {
+func Receiver(n *NFC) {
 	defer n.wg.Done()
 	for n.Started {
 		data, err := n.Device.ReceivePacket()
@@ -211,79 +202,36 @@ func (n *NFC) Receiver() {
 			if err != nil {
 				continue
 			}
-			n.RxQueue <- *p
+			if p.PacketType == ACK || p.PacketType == ADDR_RESP {
+				n.AckQueue <- *p
+			} else {
+				n.DataQueue <- *p
+			}
 		}
 	}
 }
 
-func (n *NFC) PacketHandler() {
+func PacketHandler(n *NFC) {
 	defer n.wg.Done()
 	for n.Started {
 		select {
-		case p := <-n.RxQueue:
-			if p.PacketType == ACK {
-				fmt.Printf("INFO: received a ACK for [%v]\n", p.Seq)
-				n.UpdateTimerMap(P2P, p.Seq, nil, 1)
-				n.Mutex.Lock()
-				delete(n.TxMap, p.Seq)
-				n.Mutex.Unlock()
-			} else if p.PacketType == RT_REQ {
-				if _, ok := n.TxMap[p.Seq]; !ok {
-					continue
-				}
-				p := NewPacket(p.Seq, RT_RESP, p.DestMac, p.SrcMac, p.DestIP, p.SrcIP, n.TxMap[p.Seq].Data)
-				fmt.Printf("INFO: received a RT_REQ packet for seq:[%d], send RT_RESP %v\n", p.Seq, p)
-				n.Device.SendPacket(p.Encode(), p.DestMac)
-			} else if p.PacketType == RT_RESP {
-				fmt.Printf("INFO: received a RT_RESP %v\n", p.String())
-				n.UpdateTimerMap(RT_REQ, p.Seq, nil, 1)
-				n.InsertAndSortPacket(p.SrcIP, p)
-				n.SetNextSeq(p.SrcIP, p.SrcMac)
-			} else if p.PacketType == ADDR_REQ {
+		case p := <-n.DataQueue:
+			if p.PacketType == ADDR_REQ {
 				if ADDR_LIST[p.SrcIP] == "" {
 					ADDR_LIST[p.SrcIP] = p.SrcMac
 				}
 				if n.IP == p.DestIP {
 					p := NewPacket(p.Seq, ADDR_RESP, n.Mac, p.SrcMac, p.DestIP, p.SrcIP, []byte("None"))
+					n.Device.SendPacket(p.Encode(), p.DestMac)
 					fmt.Printf("INFO: received a ADDR_REQ packet, send ADDR_RESP %v\n", p)
-					n.Device.SendPacket(p.Encode(), p.DestMac)
 				} else {
-					continue
-				}
-			} else if p.PacketType == ADDR_RESP {
-				fmt.Printf("INFO: received a ADDR_RESP packet, send all the pending data\n")
-				ADDR_LIST[p.SrcIP] = p.SrcMac
-				n.SendPendingData(p.SrcIP)
-				n.UpdateTimerMap(ADDR_REQ, p.Seq, nil, 1)
-			} else if n.NextSeq[p.SrcMac] != p.Seq {
-				seq := n.NextSeq[p.SrcMac]
-				cntu := false
-				for key := range n.RtMap {
-					for _, v := range n.RtMap[key] {
-						if v == seq {
-							cntu = true
-							break
-						}
-					}
-				}
-				if !n.InsertAndSortPacket(p.SrcIP, p) {
-					p := NewPacket(p.Seq, ACK, n.Mac, p.SrcMac, n.IP, p.SrcIP, []byte("None"))
-					n.Device.SendPacket(p.Encode(), p.DestMac)
-				} else {
-					fmt.Printf("INFO: received a disorder packet, add to RxMap %v\n", p.String())
-				}
-				n.SetNextSeq(p.SrcIP, p.SrcMac)
-				if !cntu {
-					n.RtMap[p.SrcMac] = append(n.RtMap[p.SrcMac], seq)
-					n.SendRtReq(n.NextSeq[p.SrcMac], p.SrcMac, p.SrcIP)
 					continue
 				}
 			} else {
-				n.InsertAndSortPacket(p.SrcIP, p)
-				n.SetNextSeq(p.SrcIP, p.SrcMac)
+				InsertAndSortPacket(n, p.SrcIP, p)
 				if p.PacketType == P2P {
 					p := NewPacket(p.Seq, ACK, n.Mac, p.SrcMac, n.IP, p.SrcIP, []byte("None"))
-					fmt.Printf("INFO: received a P2P packet, send ACK %v\n", p.String())
+					// fmt.Printf("INFO: received a P2P, send ACK %v\n", p.String())
 					n.Device.SendPacket(p.Encode(), p.DestMac)
 				} else {
 					fmt.Printf("INFO: received a BCST %v\n", p.String())
@@ -295,81 +243,45 @@ func (n *NFC) PacketHandler() {
 	}
 }
 
-func (n *NFC) Timer() {
+func Timer(n *NFC) {
 	defer n.wg.Done()
 	for n.Started {
-		for key := range n.TimerMap {
-			for i := range n.TimerMap[key] {
-				n.TimerMap[key][i].Timeout -= 1
-				if n.TimerMap[key][i].Timeout == 0 {
-					n.RtQueue <- n.TimerMap[key][i].Packet
-				}
-			}
-		}
-		time.Sleep(1 * time.Second)
-	}
-}
-
-func (n *NFC) Retransmitter() {
-	defer n.wg.Done()
-	for n.Started {
-		select {
-		case p := <-n.RtQueue:
-			fmt.Printf("INFO: send retransmission %v\n", p.String())
+		n.TimerPacket.Timeout--
+		if n.TimerPacket.Timeout == 0 {
+			p := n.TimerPacket.Packet
 			n.Device.SendPacket(p.Encode(), p.DestMac)
-			n.UpdateTimerMap(p.PacketType, p.Seq, nil, 2)
-		case <-n.stopCh:
-			return
+			fmt.Printf("%d INFO: send retransmission %v\n", time.Now().UnixMilli(), p.String())
+			n.TimerPacket.Timeout = TRANSMISSION_TIMEOUT
 		}
-	}
-}
-
-func (n *NFC) PushData() {
-	defer n.wg.Done()
-	for n.Started {
-		n.Mutex2.Lock()
-		for key := range n.RxMap {
-			for _, v := range n.RxMap[key] {
-				if n.SeqMap[key] == v.Seq {
-					n.RxDataCh <- v.Data
-					n.SeqMap[key] = (n.SeqMap[key] + 1) % 256
-				} else {
-					break
-				}
-			}
-		}
-		n.Mutex2.Unlock()
 		time.Sleep(1 * time.Second)
 	}
 }
 
-func (n *NFC) SetNextSeq(srcIP string, srcMac string) {
-	n.Mutex2.Lock()
-	defer n.Mutex2.Unlock()
+// func PushData(n *NFC) {
+// 	defer n.wg.Done()
+// 	for n.Started {
+// 		n.Mutex2.Lock()
+// 		for key := range n.RxMap {
+// 			for _, v := range n.RxMap[key] {
+// 				n.RxDataCh <- v.Data
+// 			}
+// 		}
+// 		n.Mutex2.Unlock()
+// 		time.Sleep(1 * time.Second)
+// 	}
+// }
 
-	next := 0
-	for _, v := range n.RxMap[srcIP] {
-		if next == v.Seq {
-			next = (next + 1) % 256
-		} else {
-			break
-		}
-	}
-	n.NextSeq[srcMac] = next
-}
-
-func (n *NFC) InsertAndSortPacket(key string, packet Packet) bool {
+func InsertAndSortPacket(n *NFC, key string, packet Packet) {
 	n.Mutex2.Lock()
 	defer n.Mutex2.Unlock()
 
 	packets := n.RxMap[key]
 	if packets == nil {
 		n.RxMap[key] = []Packet{packet}
-		return true
 	}
 	for _, v := range packets {
 		if v.Seq == packet.Seq {
-			return false
+			return
 		}
 	}
 	n.RxMap[key] = append(packets, packet)
@@ -377,52 +289,20 @@ func (n *NFC) InsertAndSortPacket(key string, packet Packet) bool {
 		return n.RxMap[key][i].Seq < n.RxMap[key][j].Seq
 	})
 	for _, v := range n.RxMap[key] {
-		fmt.Printf("%02x ", v.Seq)
+		fmt.Printf("%d ", v.Seq)
 	}
 	fmt.Println()
-	return true
-}
-
-func (n *NFC) UpdateTimerMap(key int, seq int, packet *Packet, op int) {
-	n.Mutex3.Lock()
-	defer n.Mutex3.Unlock()
-	if op == 0 {
-		// fmt.Printf("INFO: add element [%d][%d] to timer_map\n", key, packet.Seq)
-		if n.TimerMap[key] == nil {
-			n.TimerMap[key] = []TimerData{}
-		}
-		n.TimerMap[key] = append(n.TimerMap[key], TimerData{packet.Seq, n.Timeout, *packet})
-		return
-	}
-	index := -1
-	for i := range n.TimerMap[key] {
-		if n.TimerMap[key][i].Seq == seq {
-			index = i
-			break
-		}
-	}
-	if index == -1 {
-		return
-	}
-	if op == 1 {
-		// fmt.Printf("INFO: remove element [%d][%d] from timer_map\n", key, n.TimerMap[key][index].Seq)
-		n.TimerMap[key] = append(n.TimerMap[key][:index], n.TimerMap[key][index+1:]...)
-	} else if op == 2 {
-		// fmt.Printf("INFO: update element [%d][%d]\n", key, n.TimerMap[key][index].Seq)
-		n.TimerMap[key][index].Timeout = n.Timeout
-	}
 }
 
 func (n *NFC) Start() {
 	n.stopCh = make(chan struct{})
 	n.Started = true
 	n.Device.Start()
-	n.wg.Add(5)
-	go n.Receiver()
-	go n.PacketHandler()
-	go n.Timer()
-	go n.Retransmitter()
-	go n.PushData()
+	n.wg.Add(4)
+	go Receiver(n)
+	go Sender(n)
+	go PacketHandler(n)
+	go Timer(n)
 }
 
 func (n *NFC) Stop() {

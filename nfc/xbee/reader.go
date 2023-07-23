@@ -82,9 +82,7 @@ func (reader *Reader) ReadFrame() {
 				frame = append(frame, reader.ReadBytes(int(frame[LEN_END_OFFSET])+1)...)
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// if len(frame) > 20 {
-				// 	fmt.Println(len(frame))
-				// }
+				// fmt.Println(len(frame))
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE || frame[FRAME_TYPE_OFFSET] == TRANSMIT_STATUS {
 					select {
 					case reader.RecvRespCh <- temp:
