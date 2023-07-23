@@ -14,7 +14,7 @@ func main() {
 		return
 	}
 	defer file.Close()
-	data := make([]byte, 1024)
+	data := make([]byte, 2048)
 
 	n, err := file.Read(data)
 	if err != nil {
@@ -27,13 +27,19 @@ func main() {
 	nfc.Start()
 
 	time.Sleep(8 * time.Second)
-	for i := 4; i < 26; i++ {
-		if i%5 == 0 {
-			nfc.Send(data, "255.255.255.255")
-		} else {
-			nfc.Send(data, "192.168.0.2")
-		}
+	for i := 0; i < 20; i++ {
+		nfc.Send(data, "192.168.0.2")
+		// if i%5 == 0 {
+		// 	nfc.Send(data, "255.255.255.255")
+		// } else {
+		// 	nfc.Send(data, "192.168.0.2")
+		// }
 	}
 	for {
+		// data := nfc.GetData()
+		// if data != nil {
+		// 	fmt.Println(len(data))
+		// }
+		// time.Sleep(3 * time.Second)
 	}
 }

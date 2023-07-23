@@ -3,7 +3,6 @@ package nfc
 import (
 	"ccl/go/nfc/xbee"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -57,11 +56,9 @@ type NFC struct {
 	Mac         string
 	Seq         int
 	IP          string
-	TxMap       map[int]Packet
 	RxMap       map[string][]Packet
 	RtMap       map[string][]int
 	Txqueue     chan TxData
-	RtQueue     chan Packet
 	AckQueue    chan Packet
 	DataQueue   chan Packet
 	RxDataCh    chan []byte
@@ -78,14 +75,12 @@ func NewNFC(ip string) *NFC {
 	return &NFC{
 		IP:        ip,
 		Seq:       -1,
-		TxMap:     make(map[int]Packet),
 		RxMap:     make(map[string][]Packet),
-		Txqueue:   make(chan TxData, 64),
+		Txqueue:   make(chan TxData, 128),
 		DataQueue: make(chan Packet, 3),
 		AckQueue:  make(chan Packet, 3),
-		RtQueue:   make(chan Packet, 20),
 		RtMap:     make(map[string][]int),
-		RxDataCh:  make(chan []byte, 64),
+		RxDataCh:  make(chan []byte, 128),
 		stopCh:    make(chan struct{}),
 		Started:   false,
 	}
@@ -145,7 +140,9 @@ func Sender(n *NFC) {
 			} else {
 				if destMac, ok := ADDR_LIST[tx.destIP]; ok {
 					p := NewPacket(n.Seq, P2P, n.Mac, destMac, n.IP, tx.destIP, tx.data)
+					cur := time.Now()
 					n.Device.SendPacket(p.Encode(), destMac)
+					fmt.Println(time.Since(cur))
 					fmt.Printf("INFO: send P2P %v\n", p.String())
 					n.Mutex.Lock()
 					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
@@ -175,12 +172,22 @@ func Sender(n *NFC) {
 	}
 }
 
+var (
+	before = -1
+	count  = 0
+)
+
 func WaitingForAck(n *NFC, p *Packet) {
 	for {
 		ack := <-n.AckQueue
 		if ack.Seq == p.Seq {
 			if ack.PacketType == ACK {
 				fmt.Printf("INFO: received a ACK for [%v]\n", p.Seq)
+				if ack.Seq != before {
+					count++
+					fmt.Println("count:", count)
+					before = ack.Seq
+				}
 			} else {
 				fmt.Printf("INFO: received a ADDR_RESP for [%v]\n", p.Seq)
 				ADDR_LIST[ack.SrcIP] = ack.SrcMac
@@ -228,7 +235,7 @@ func PacketHandler(n *NFC) {
 					continue
 				}
 			} else {
-				InsertAndSortPacket(n, p.SrcIP, p)
+				InsertPacket(n, p.SrcIP, p)
 				if p.PacketType == P2P {
 					p := NewPacket(p.Seq, ACK, n.Mac, p.SrcMac, n.IP, p.SrcIP, []byte("None"))
 					// fmt.Printf("INFO: received a P2P, send ACK %v\n", p.String())
@@ -257,21 +264,29 @@ func Timer(n *NFC) {
 	}
 }
 
-// func PushData(n *NFC) {
-// 	defer n.wg.Done()
-// 	for n.Started {
-// 		n.Mutex2.Lock()
-// 		for key := range n.RxMap {
-// 			for _, v := range n.RxMap[key] {
-// 				n.RxDataCh <- v.Data
-// 			}
-// 		}
-// 		n.Mutex2.Unlock()
-// 		time.Sleep(1 * time.Second)
-// 	}
-// }
+func PushData(n *NFC) {
+	defer n.wg.Done()
+	for n.Started {
+		for key := range n.RxMap {
+			for _, v := range n.RxMap[key] {
+				n.RxDataCh <- v.Data
+			}
+			delete(n.RxMap, key)
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
 
-func InsertAndSortPacket(n *NFC, key string, packet Packet) {
+func (n *NFC) GetData() []byte {
+	select {
+	case data := <-n.RxDataCh:
+		return data
+	default:
+		return nil
+	}
+}
+
+func InsertPacket(n *NFC, key string, packet Packet) {
 	n.Mutex2.Lock()
 	defer n.Mutex2.Unlock()
 
@@ -285,23 +300,17 @@ func InsertAndSortPacket(n *NFC, key string, packet Packet) {
 		}
 	}
 	n.RxMap[key] = append(packets, packet)
-	sort.Slice(n.RxMap[key], func(i, j int) bool {
-		return n.RxMap[key][i].Seq < n.RxMap[key][j].Seq
-	})
-	for _, v := range n.RxMap[key] {
-		fmt.Printf("%d ", v.Seq)
-	}
-	fmt.Println()
 }
 
 func (n *NFC) Start() {
 	n.stopCh = make(chan struct{})
 	n.Started = true
 	n.Device.Start()
-	n.wg.Add(4)
+	n.wg.Add(5)
 	go Receiver(n)
-	go Sender(n)
+	go PushData(n)
 	go PacketHandler(n)
+	go Sender(n)
 	go Timer(n)
 }
 

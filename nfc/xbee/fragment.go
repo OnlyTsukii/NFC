@@ -33,7 +33,17 @@ func NewFragment(no, seq, total int, data []byte) (*Fragment, error) {
 }
 
 func (p *Fragment) Encode() []byte {
-	return append(append(append(append([]byte{}, byte(p.No)), byte(p.Seq)), byte(p.Total)), p.Data...)
+	no := byte(p.No)
+	seq := byte(p.Seq)
+	total := byte(p.Total)
+	data := p.Data
+
+	fragment := make([]byte, 3+len(data))
+	fragment[0] = no
+	fragment[1] = seq
+	fragment[2] = total
+	copy(fragment[3:], data)
+	return fragment
 }
 
 func DecodeFragment(data []byte) (*Fragment, error) {
