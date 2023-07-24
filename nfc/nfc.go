@@ -140,14 +140,12 @@ func Sender(n *NFC) {
 			} else {
 				if destMac, ok := ADDR_LIST[tx.destIP]; ok {
 					p := NewPacket(n.Seq, P2P, n.Mac, destMac, n.IP, tx.destIP, tx.data)
-					cur := time.Now()
 					n.Device.SendPacket(p.Encode(), destMac)
-					fmt.Println(time.Since(cur))
 					fmt.Printf("INFO: send P2P %v\n", p.String())
 					n.Mutex.Lock()
 					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
 					n.Mutex.Unlock()
-					WaitingForAck(n, p)
+					WaitForAck(n, p)
 				} else {
 					p := NewPacket(n.Seq, ADDR_REQ, n.Mac, BCST_ADDR, n.IP, tx.destIP, []byte([]byte("None")))
 					n.Device.SendPacket(p.Encode(), BCST_ADDR)
@@ -155,7 +153,7 @@ func Sender(n *NFC) {
 					n.Mutex.Lock()
 					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
 					n.Mutex.Unlock()
-					WaitingForAck(n, p)
+					WaitForAck(n, p)
 
 					p = NewPacket(n.Seq, P2P, n.Mac, ADDR_LIST[tx.destIP], n.IP, tx.destIP, tx.data)
 					n.Device.SendPacket(p.Encode(), p.DestMac)
@@ -163,7 +161,7 @@ func Sender(n *NFC) {
 					n.Mutex.Lock()
 					n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT}
 					n.Mutex.Unlock()
-					WaitingForAck(n, p)
+					WaitForAck(n, p)
 				}
 			}
 		case <-n.stopCh:
@@ -177,7 +175,7 @@ var (
 	count  = 0
 )
 
-func WaitingForAck(n *NFC, p *Packet) {
+func WaitForAck(n *NFC, p *Packet) {
 	for {
 		ack := <-n.AckQueue
 		if ack.Seq == p.Seq {
@@ -257,7 +255,7 @@ func Timer(n *NFC) {
 		if n.TimerPacket.Timeout == 0 {
 			p := n.TimerPacket.Packet
 			n.Device.SendPacket(p.Encode(), p.DestMac)
-			fmt.Printf("%d INFO: send retransmission %v\n", time.Now().UnixMilli(), p.String())
+			fmt.Printf("INFO: send retransmission %v\n", p.String())
 			n.TimerPacket.Timeout = TRANSMISSION_TIMEOUT
 		}
 		time.Sleep(1 * time.Second)
@@ -302,7 +300,10 @@ func InsertPacket(n *NFC, key string, packet Packet) {
 	n.RxMap[key] = append(packets, packet)
 }
 
-func (n *NFC) Start() {
+func (n *NFC) Start() bool {
+	if !n.Open() {
+		return false
+	}
 	n.stopCh = make(chan struct{})
 	n.Started = true
 	n.Device.Start()
@@ -312,6 +313,7 @@ func (n *NFC) Start() {
 	go PacketHandler(n)
 	go Sender(n)
 	go Timer(n)
+	return true
 }
 
 func (n *NFC) Stop() {
@@ -321,7 +323,7 @@ func (n *NFC) Stop() {
 	n.wg.Wait()
 }
 
-func (n *NFC) Close() {
+func (n *NFC) Destroy() {
 	n.Device.Close()
 	n.Started = false
 	close(n.stopCh)

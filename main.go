@@ -26,14 +26,16 @@ func main() {
 	nfc.Open()
 	nfc.Start()
 
+	count := 1
 	time.Sleep(8 * time.Second)
 	for i := 0; i < 20; i++ {
-		nfc.Send(data, "192.168.0.2")
-		// if i%5 == 0 {
-		// 	nfc.Send(data, "255.255.255.255")
-		// } else {
-		// 	nfc.Send(data, "192.168.0.2")
-		// }
+		// nfc.Send(data, "192.168.0.2")
+		if count%4 == 0 {
+			nfc.Send(data, "255.255.255.255")
+		} else {
+			nfc.Send(data, "192.168.0.2")
+		}
+		count++
 	}
 	for {
 		// data := nfc.GetData()

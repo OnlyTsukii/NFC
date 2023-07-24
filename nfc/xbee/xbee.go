@@ -171,18 +171,16 @@ func (x *Xbee) ReceivePacket() ([]byte, error) {
 				kv[0]++
 			}
 			x.SeqMap[remoteAddr] = kv
-		} else {
-			if kv[0] == frag.No && kv[1] == frag.Seq {
+		} else if kv[0] == frag.No {
+			if kv[1] == frag.Seq {
 				kv[1] = (kv[1] + 1) % frag.Total
 				if kv[1] == 0 {
 					kv[0]++
 				}
-			} else if kv[0] >= frag.No {
-				if kv[1] >= frag.Seq {
-					continue
-				} else {
-					return nil, errors.New("received a disorder fragment")
-				}
+			} else if kv[1] < frag.Seq {
+				return nil, errors.New("received a disorder fragment")
+			} else if kv[1] > frag.Seq {
+				continue
 			}
 		}
 		index := fmt.Sprintf("%s:%d", remoteAddr, frag.No)
