@@ -1,6 +1,7 @@
 package xbee
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,68 +44,6 @@ const (
 	RESPONSE_TIMEOUT = 5
 )
 
-type Xbee struct {
-	Port    serial.Port
-	Mac     string
-	Seq     int
-	Reader  *Reader
-	Sender  *Sender
-	Started bool
-	SeqMap  map[string][]int
-	Mutex   sync.Mutex
-}
-
-func NewXbee(port string, baudrate int) (*Xbee, error) {
-	x := Xbee{Seq: -1}
-	conf := &serial.Config{Name: port, Baud: baudrate}
-	p, err := serial.OpenPort(conf)
-	if err != nil {
-		return nil, errors.New("open serial port failed")
-	}
-	x.Port = *p
-	x.SeqMap = make(map[string][]int)
-	x.Sender = NewSender(*p)
-	x.Reader = NewReader(*p)
-	x.SetMacAddr()
-	return &x, nil
-}
-
-func (x *Xbee) SetMacAddr() error {
-	x.Reader.Start()
-	var mac []string
-	ATs := []string{"SH", "SL"}
-	resp, err := x.Sender.SendATCmdWithResponse(ATs, x.Reader)
-	if err != nil {
-		return err
-	}
-	for _, v := range ATs {
-		for _, v := range resp[v] {
-			mac = append(mac, fmt.Sprintf("%02x", v))
-		}
-	}
-	x.Mac = strings.Join(mac, "")
-	x.Reader.Stop()
-	return nil
-}
-
-func (x *Xbee) SendData(x64addr string, data []byte) error {
-	return x.Sender.SendPacketWithResponse(x64addr, data, x.Reader)
-}
-
-func (x *Xbee) RecvData() ([]byte, string, error) {
-	packet, err := x.Reader.GetPacket(RESPONSE_TIMEOUT)
-	if err != nil || packet == nil {
-		return nil, "", err
-	}
-	if Check(packet) {
-		// fmt.Println(len(packet))
-		return packet[API_RECV_DATA_OFFSET : len(packet)-1],
-			BytesToStr(packet[API_RECV_X64ADDR_OFFSET:API_RECV_X16ADDR_OFFSET]), nil
-	} else {
-		return nil, "", errors.New("received packet is corrupted")
-	}
-}
-
 type Data struct {
 	Fragments []*Fragment
 }
@@ -127,28 +66,112 @@ func (d *Data) GetData() []byte {
 	return data
 }
 
-func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
-	x.Mutex.Lock()
-	defer x.Mutex.Unlock()
-	x.Seq = (x.Seq + 1) % 256
-	fragments := GetFragments(x.Seq, data)
-	// fmt.Println(len(fragments))
-	// cur := time.Now()
-	for _, frag := range fragments {
-		count := 0
-		for x.Started {
-			err := x.SendData(remoteAddr, frag.Encode())
-			count++
-			if err == nil {
-				break
-			} else if count == 5 {
-				return false
-			}
-			time.Sleep(200 * time.Millisecond)
+type Xbee struct {
+	Port    serial.Port
+	Mac     string
+	Seq     int
+	Reader  *Reader
+	Writer  *Writer
+	Started bool
+
+	Mutex sync.Mutex
+}
+
+func NewXbee(port string, baudrate int) (*Xbee, error) {
+	x := Xbee{Seq: -1}
+	conf := &serial.Config{Name: port, Baud: baudrate, ReadTimeout: 500 * time.Millisecond}
+	p, err := serial.OpenPort(conf)
+	if err != nil {
+		return nil, err
+	}
+	x.Port = *p
+	x.Writer = NewWriter(*p)
+	x.Reader = NewReader(*p)
+	err = x.SetMacAddr()
+	if err != nil {
+		return nil, err
+	}
+	return &x, nil
+}
+
+func (x *Xbee) SetMacAddr() error {
+	ctx, _ := context.WithCancel(context.TODO())
+	if !x.Reader.started {
+		x.Reader.Start(ctx)
+	}
+	var mac []string
+	ATs := []string{"SH", "SL"}
+	res := make(map[string][]byte, 0)
+	err := errors.New("")
+	for i := 0; i < 3; i++ {
+		res, err = x.Writer.SendATCmdWithResponse(ATs, x.Reader)
+		if err == nil {
+			break
 		}
 	}
-	// fmt.Println(time.Since(cur))
-	return true
+	if err != nil {
+		if x.Reader.started {
+			x.Reader.Stop()
+		}
+		return err
+	}
+	for _, v := range ATs {
+		for _, v := range res[v] {
+			mac = append(mac, fmt.Sprintf("%02x", v))
+		}
+	}
+	x.Mac = strings.Join(mac, "")
+	if x.Reader.started {
+		x.Reader.Stop()
+	}
+	return nil
+}
+
+func (x *Xbee) GetNodes() ([]string, error) {
+	x.Mutex.Lock()
+	defer x.Mutex.Unlock()
+
+	addrs := make([]string, 0)
+	resp, err := x.Writer.GetNodes(x.Reader)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range resp {
+		addrs = append(addrs, BytesToStr(v))
+	}
+	return addrs, nil
+}
+
+func (x *Xbee) SendData(x64addr string, data []byte) error {
+	return x.Writer.SendPacketWithResponse(x64addr, data, x.Reader)
+}
+
+func (x *Xbee) RecvData() ([]byte, string, error) {
+	packet, err := x.Reader.GetPacket(RESPONSE_TIMEOUT)
+	if err != nil || packet == nil {
+		return nil, "", err
+	}
+	if Check(packet) {
+		return packet[API_RECV_DATA_OFFSET : len(packet)-1],
+			BytesToStr(packet[API_RECV_X64ADDR_OFFSET:API_RECV_X16ADDR_OFFSET]), nil
+	} else {
+		return nil, "", errors.New("received packet is corrupted")
+	}
+}
+
+func (x *Xbee) SendPacket(data []byte, remoteAddr string) {
+	x.Mutex.Lock()
+	defer x.Mutex.Unlock()
+
+	x.Seq = (x.Seq + 1) % 256
+	fragments := GetFragments(x.Seq, data)
+	for _, frag := range fragments {
+		err := x.SendData(remoteAddr, frag.Encode())
+		if err != nil {
+			fmt.Println("xbee failed to send data")
+			break
+		}
+	}
 }
 
 func (x *Xbee) ReceivePacket() ([]byte, error) {
@@ -157,58 +180,46 @@ func (x *Xbee) ReceivePacket() ([]byte, error) {
 	for x.Started {
 		fragment, remoteAddr, err := x.RecvData()
 		if err != nil {
-			continue
+			return nil, err
 		}
 		frag, err := DecodeFragment(fragment)
 		if err != nil {
-			continue
-		}
-		if kv, ok := x.SeqMap[remoteAddr]; !ok {
-			kv := make([]int, 2)
-			kv[0] = frag.No
-			kv[1] = (kv[1] + 1) % frag.Total
-			if kv[1] == 0 {
-				kv[0]++
-			}
-			x.SeqMap[remoteAddr] = kv
-		} else if kv[0] == frag.No {
-			if kv[1] == frag.Seq {
-				kv[1] = (kv[1] + 1) % frag.Total
-				if kv[1] == 0 {
-					kv[0]++
-				}
-			} else if kv[1] < frag.Seq {
-				return nil, errors.New("received a disorder fragment")
-			} else if kv[1] > frag.Seq {
-				continue
-			}
+			return nil, err
 		}
 		index := fmt.Sprintf("%s:%d", remoteAddr, frag.No)
 		if _, ok := receivedData[index]; !ok {
 			receivedData[index] = NewData()
 		}
-		// fmt.Printf("%s:Xbee receive packet: no %d seq %d len %d \n", x.Mac, frag.No, frag.Seq, len(frag.Data))
 		receivedData[index].Append(frag)
 		if len(receivedData[index].Fragments) == frag.Total {
 			originalMessage = receivedData[index].GetData()
-			delete(receivedData, index)
-			break
+			for key := range receivedData {
+				delete(receivedData, key)
+			}
+			return originalMessage, nil
 		}
 	}
 	return originalMessage, nil
 }
 
-func (x *Xbee) Start() {
+func (x *Xbee) Start(ctx context.Context) {
 	x.Started = true
-	x.Reader.Start()
+	if !x.Reader.started {
+		x.Reader.Start(ctx)
+	}
 }
 
 func (x *Xbee) Stop() {
 	x.Started = false
-	x.Reader.Stop()
+	if x.Reader.started {
+		x.Reader.Stop()
+	}
 }
 
 func (x *Xbee) Close() {
-	x.Stop()
+	x.Started = false
+	if x.Reader.started {
+		x.Reader.Stop()
+	}
 	x.Port.Close()
 }

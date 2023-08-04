@@ -69,9 +69,6 @@ func isATCmdValid(resp []byte, AT *ATCmdFrame) bool {
 	if resp == nil {
 		return false
 	}
-	if resp[FRAME_SEQ_OFFSET] != AT.FrameSeq {
-		return false
-	}
 	if Check(resp) {
 		if resp[AT_RESP_STATUS_OFFSET] == 0 {
 			return true

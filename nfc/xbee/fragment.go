@@ -78,7 +78,6 @@ func GetFragments(no int, data []byte) []*Fragment {
 		}
 		fragments = append(fragments, p)
 	}
-	// fmt.Printf("size of packets: %d \n", len(fragments))
 	return fragments
 }
 

@@ -1,7 +1,9 @@
 package xbee
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -15,16 +17,17 @@ const (
 	MAX_RECV_BYTE_CH   = 30000
 )
 
-var STOP_CMD = []byte{0x7e, 0x00, 0x04, 0x09, 0x01, 0x41, 0x50, 0x64}
+var child_ctx, cancel = context.WithCancel(context.TODO())
 
 type Reader struct {
 	Port         serial.Port
 	RecvRespCh   chan []byte
 	RecvPacketCh chan []byte
 	RecvByteCh   chan byte
-	Started      bool
-	stopCh       chan struct{}
-	wg           sync.WaitGroup
+	started      bool
+
+	Mutex sync.Mutex
+	wg    sync.WaitGroup
 }
 
 func NewReader(port serial.Port) *Reader {
@@ -33,56 +36,62 @@ func NewReader(port serial.Port) *Reader {
 		RecvRespCh:   make(chan []byte, MAX_RECV_RESP_CH),
 		RecvPacketCh: make(chan []byte, MAX_RECV_PACKET_CH),
 		RecvByteCh:   make(chan byte, MAX_RECV_BYTE_CH),
-		Started:      false,
-		stopCh:       make(chan struct{}),
-		wg:           sync.WaitGroup{},
 	}
-}
-
-func makeTimeout(ch chan bool, t int) {
-	time.Sleep(time.Second * time.Duration(t))
-	ch <- true
 }
 
 func (reader *Reader) GetPacket(t int) ([]byte, error) {
-	timeout := make(chan bool, 1)
-	go makeTimeout(timeout, t)
-	select {
-	case temp := <-reader.RecvPacketCh:
-		return temp, nil
-	case <-timeout:
-		return nil, errors.New("get packet timeout")
-	case <-reader.stopCh:
-		return nil, nil
+	count := 0
+	for {
+		select {
+		case temp := <-reader.RecvPacketCh:
+			return temp, nil
+		default:
+			time.Sleep(10 * time.Millisecond)
+			count++
+			if count == t*100 {
+				return nil, errors.New("get packet timeout")
+			}
+		}
 	}
 }
 
-func (reader *Reader) GetResp(t int) ([]byte, error) {
-	timeout := make(chan bool, 1)
-	go makeTimeout(timeout, t)
-	select {
-	case temp := <-reader.RecvRespCh:
-		return temp, nil
-	case <-timeout:
-		return nil, errors.New("get response timeout")
-	case <-reader.stopCh:
-		return nil, nil
+func (reader *Reader) GetResp(t int, seq byte) ([]byte, error) {
+	reader.Mutex.Lock()
+	defer reader.Mutex.Unlock()
+	count := 0
+	for {
+		select {
+		case temp := <-reader.RecvRespCh:
+			if temp[FRAME_SEQ_OFFSET] == seq {
+				return temp, nil
+			}
+		default:
+			time.Sleep(10 * time.Millisecond)
+			count++
+			if count == t*100 {
+				return nil, errors.New("get response timeout")
+			}
+		}
 	}
 }
 
-func (reader *Reader) ReadFrame() {
+func (reader *Reader) ReadFrame(ctx context.Context) {
 	defer reader.wg.Done()
 	frame := make([]byte, 0)
+	fmt.Println("readFrame started")
 	for {
 		select {
 		case b := <-reader.RecvByteCh:
 			if b == DELIMITER {
 				frame = append(frame, b)
-				frame = append(frame, reader.ReadBytes(2)...)
-				frame = append(frame, reader.ReadBytes(int(frame[LEN_END_OFFSET])+1)...)
+				frame = append(frame, reader.ReadBytes(ctx, 2)...)
+				frame = append(frame, reader.ReadBytes(ctx, int(frame[LEN_END_OFFSET])+1)...)
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// fmt.Println(len(frame))
+				// if len(frame) == 29 {
+				// 	fmt.Println(len(frame))
+				// }
+				// print(frame)
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE || frame[FRAME_TYPE_OFFSET] == TRANSMIT_STATUS {
 					select {
 					case reader.RecvRespCh <- temp:
@@ -100,13 +109,14 @@ func (reader *Reader) ReadFrame() {
 				}
 				frame = make([]byte, 0)
 			}
-		case <-reader.stopCh:
+		case <-ctx.Done():
+			fmt.Println("readFrame stopped")
 			return
 		}
 	}
 }
 
-func (reader *Reader) ReadBytes(count int) []byte {
+func (reader *Reader) ReadBytes(ctx context.Context, count int) []byte {
 	res := make([]byte, count)
 	index := 0
 	for index < count {
@@ -114,22 +124,25 @@ func (reader *Reader) ReadBytes(count int) []byte {
 		case b := <-reader.RecvByteCh:
 			res[index] = b
 			index++
-		case <-reader.stopCh:
+		case <-ctx.Done():
 			return nil
 		}
 	}
 	return res
 }
 
-func (reader *Reader) ReadByte() {
+func (reader *Reader) ReadByte(ctx context.Context) {
 	defer reader.wg.Done()
+	fmt.Println("readByte started")
 	for {
 		data := make([]byte, 1)
 		reader.Port.Read(data)
 		select {
 		case reader.RecvByteCh <- data[0]:
-		case <-reader.stopCh:
+		case <-ctx.Done():
+			fmt.Println("readByte stopped")
 			return
+		default:
 		}
 	}
 }
@@ -146,16 +159,19 @@ func (reader *Reader) Clear() {
 	}
 }
 
-func (reader *Reader) Start() {
-	reader.stopCh = make(chan struct{})
+func (reader *Reader) Start(ctx context.Context) {
+	reader.started = true
+	child_ctx, cancel = context.WithCancel(ctx)
 	reader.wg.Add(2)
-	go reader.ReadByte()
-	go reader.ReadFrame()
+	go reader.ReadByte(child_ctx)
+	go reader.ReadFrame(child_ctx)
+	fmt.Println("reader started")
 }
 
 func (reader *Reader) Stop() {
-	close(reader.stopCh)
-	reader.Port.Write(STOP_CMD)
-	reader.wg.Wait()
 	reader.Clear()
+	cancel()
+	reader.wg.Wait()
+	reader.started = false
+	fmt.Println("reader stopped")
 }

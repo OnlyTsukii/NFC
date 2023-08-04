@@ -2,7 +2,7 @@ package xbee
 
 import (
 	"errors"
-	"time"
+	"fmt"
 
 	"github.com/tarm/serial"
 )
@@ -12,13 +12,13 @@ const (
 	BCST_X16_ADDR      = "FFFE"
 )
 
-type Sender struct {
+type Writer struct {
 	Port serial.Port
 	Seq  int
 }
 
-func NewSender(port serial.Port) *Sender {
-	return &Sender{
+func NewWriter(port serial.Port) *Writer {
+	return &Writer{
 		Port: port,
 		Seq:  0,
 	}
@@ -48,7 +48,7 @@ type TransmitRequestFrame struct {
 	CheckSum  byte
 }
 
-func (s *Sender) GenATCmd(cmd string) *ATCmdFrame {
+func (s *Writer) GenATCmd(cmd string) *ATCmdFrame {
 	CMD := ATCmdFrame{
 		Delimiter: 0x7e,
 		LenStart:  0x00,
@@ -64,7 +64,7 @@ func (s *Sender) GenATCmd(cmd string) *ATCmdFrame {
 	return &CMD
 }
 
-func (s *Sender) GenTransmitRequest(x64addr []byte, data []byte) *TransmitRequestFrame {
+func (s *Writer) GenTransmitRequest(x64addr []byte, data []byte) *TransmitRequestFrame {
 	end := 1 + 1 + 8 + 2 + 1 + 1 + len(data)
 	s.Seq = (s.Seq + 1) % 256
 	CMD := TransmitRequestFrame{
@@ -83,23 +83,40 @@ func (s *Sender) GenTransmitRequest(x64addr []byte, data []byte) *TransmitReques
 	return &CMD
 }
 
-func (s *Sender) SendATCmdWithResponse(cmd []string, r *Reader) (map[string][]byte, error) {
+func (s *Writer) GetNodes(r *Reader) ([][]byte, error) {
+	resp := make([][]byte, 0)
+	AT := s.GenATCmd("ND")
+	s.Port.Write(ATCmdFrameToBytes(AT))
+	timeout := 13
+	for {
+		frame, err := r.GetResp(timeout, AT.FrameSeq)
+		if err != nil {
+			fmt.Printf("Found %d nodes \n", len(resp))
+			return resp, nil
+		} else {
+			timeout = RESPONSE_TIMEOUT
+			if isATCmdValid(frame, AT) {
+				resp = append(resp, frame[AT_RESP_RESPONSE_OFFSET+2:AT_RESP_RESPONSE_OFFSET+10])
+			} else {
+				fmt.Println("received response is invalid")
+				return nil, errors.New("received response is invalid")
+			}
+		}
+	}
+}
+
+func (s *Writer) SendATCmdWithResponse(cmd []string, r *Reader) (map[string][]byte, error) {
 	resp := make(map[string][]byte, 0)
-	ATs := make([]ATCmdFrame, len(cmd))
 	for i, v := range cmd {
 		AT := s.GenATCmd(v)
-		ATs[i] = *AT
 		s.Port.Write(ATCmdFrameToBytes(AT))
-		time.Sleep(50 * time.Millisecond)
-	}
-	for _, v := range ATs {
-		res, err := r.GetResp(RESPONSE_TIMEOUT)
+		res, err := r.GetResp(RESPONSE_TIMEOUT, AT.FrameSeq)
 		if err != nil {
 			return nil, err
 		}
-		if isATCmdValid(res, &v) {
+		if isATCmdValid(res, AT) {
 			end := 3 + int(res[LEN_END_OFFSET])
-			resp[string(v.Data)] = res[AT_RESP_RESPONSE_OFFSET:end]
+			resp[cmd[i]] = res[AT_RESP_RESPONSE_OFFSET:end]
 		} else {
 			return nil, errors.New("received response is invalid")
 		}
@@ -107,15 +124,14 @@ func (s *Sender) SendATCmdWithResponse(cmd []string, r *Reader) (map[string][]by
 	return resp, nil
 }
 
-func (s *Sender) SendPacketWithResponse(x64addr string, data []byte, r *Reader) error {
+func (s *Writer) SendPacketWithResponse(x64addr string, data []byte, r *Reader) error {
 	if len(data) > MAX_FRAME_DATA_LEN {
 		return errors.New("data too long")
 	}
 	CMD := s.GenTransmitRequest(StrToBytes(x64addr), data)
 	packet := TransmitRequestFrameToBytes(CMD)
 	s.Port.Write(packet)
-	// time.Sleep(200 * time.Millisecond)
-	resp, err := r.GetResp(RESPONSE_TIMEOUT)
+	resp, err := r.GetResp(RESPONSE_TIMEOUT, CMD.FrameSeq)
 	if err != nil {
 		return err
 	}
