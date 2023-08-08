@@ -1,4 +1,4 @@
-package nfc
+package nfd
 
 import (
 	"encoding/hex"
@@ -106,7 +106,7 @@ func GetIP(packet []byte) (string, string, error) {
 	}
 }
 
-func CreateIPData(n *NFC, dest string, bs []byte) []byte {
+func CreateIPData(n *NearFieldDevice, dest string, bs []byte) []byte {
 	if len(dest) > 15 {
 		data := make([]byte, 40+len(bs))
 		data[0] = byte(0x60)
@@ -165,7 +165,7 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 	}
 
 	// 接收并解析响应
-	reply := make([]byte, 48)
+	reply := make([]byte, len(msg))
 	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3)) // 设置3秒超时
 	if err != nil {
 		fmt.Println("Error setting read deadline:", err)
@@ -181,4 +181,35 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 	duration := time.Since(start)
 	fmt.Printf("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
 	return reply, nil
+}
+
+func GetMsg() []byte {
+	// 构造一个简单的ICMP消息
+	msg := make([]byte, 48)
+	msg[0] = 8  // Type: 8 (Echo Request)
+	msg[1] = 0  // Code: 0
+	msg[2] = 0  // Checksum (placeholder)
+	msg[3] = 0  // Checksum (placeholder)
+	msg[4] = 0  // Identifier (arbitrary)
+	msg[5] = 13 // Identifier (arbitrary)
+	msg[6] = 0  // Sequence Number (arbitrary)
+	msg[7] = 37 // Sequence Number (arbitrary)
+
+	// 计算校验和
+	checksum := checkSum(msg)
+	msg[2] = byte(checksum >> 8)
+	msg[3] = byte(checksum)
+
+	return msg
+}
+
+// 计算校验和
+func checkSum(msg []byte) uint16 {
+	sum := 0
+	for i := 0; i < len(msg)-1; i += 2 {
+		sum += int(msg[i])*256 + int(msg[i+1])
+	}
+	sum = (sum >> 16) + (sum & 0xffff)
+	sum += sum >> 16
+	return uint16(^sum)
 }

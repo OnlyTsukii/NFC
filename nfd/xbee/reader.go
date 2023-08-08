@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	DELIMITER          = 0x7e
-	MAX_RECV_PACKET_CH = 100
-	MAX_RECV_RESP_CH   = 100
-	MAX_RECV_BYTE_CH   = 30000
+	DELIMITER               = 0x7e
+	MAX_RECV_PACKET_CH_SIZE = 100
+	MAX_RECV_RESP_CH_SIZE   = 100
+	MAX_RECV_STATUS_CH_SIZE = 100
+	MAX_RECV_BYTE_CH_SIZE   = 30000
 )
 
 var child_ctx, cancel = context.WithCancel(context.TODO())
@@ -24,6 +25,7 @@ type Reader struct {
 	RecvRespCh   chan []byte
 	RecvPacketCh chan []byte
 	RecvByteCh   chan byte
+	RecvStatusCh chan []byte
 	started      bool
 
 	Mutex sync.Mutex
@@ -33,9 +35,10 @@ type Reader struct {
 func NewReader(port serial.Port) *Reader {
 	return &Reader{
 		Port:         port,
-		RecvRespCh:   make(chan []byte, MAX_RECV_RESP_CH),
-		RecvPacketCh: make(chan []byte, MAX_RECV_PACKET_CH),
-		RecvByteCh:   make(chan byte, MAX_RECV_BYTE_CH),
+		RecvRespCh:   make(chan []byte, MAX_RECV_RESP_CH_SIZE),
+		RecvPacketCh: make(chan []byte, MAX_RECV_PACKET_CH_SIZE),
+		RecvStatusCh: make(chan []byte, MAX_RECV_STATUS_CH_SIZE),
+		RecvByteCh:   make(chan byte, MAX_RECV_BYTE_CH_SIZE),
 	}
 }
 
@@ -56,8 +59,6 @@ func (reader *Reader) GetPacket(t int) ([]byte, error) {
 }
 
 func (reader *Reader) GetResp(t int, seq byte) ([]byte, error) {
-	reader.Mutex.Lock()
-	defer reader.Mutex.Unlock()
 	count := 0
 	for {
 		select {
@@ -70,6 +71,24 @@ func (reader *Reader) GetResp(t int, seq byte) ([]byte, error) {
 			count++
 			if count == t*100 {
 				return nil, errors.New("get response timeout")
+			}
+		}
+	}
+}
+
+func (reader *Reader) GetStatus(t int, seq byte) ([]byte, error) {
+	count := 0
+	for {
+		select {
+		case temp := <-reader.RecvStatusCh:
+			if temp[FRAME_SEQ_OFFSET] == seq {
+				return temp, nil
+			}
+		default:
+			time.Sleep(10 * time.Millisecond)
+			count++
+			if count == t*100 {
+				return nil, errors.New("get status timeout")
 			}
 		}
 	}
@@ -92,12 +111,19 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 				// 	fmt.Println(len(frame))
 				// }
 				// print(frame)
-				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE || frame[FRAME_TYPE_OFFSET] == TRANSMIT_STATUS {
+				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE {
 					select {
 					case reader.RecvRespCh <- temp:
 					default:
 						<-reader.RecvRespCh
 						reader.RecvRespCh <- temp
+					}
+				} else if frame[FRAME_TYPE_OFFSET] == TRANSMIT_STATUS {
+					select {
+					case reader.RecvStatusCh <- temp:
+					default:
+						<-reader.RecvStatusCh
+						reader.RecvStatusCh <- temp
 					}
 				} else if frame[FRAME_TYPE_OFFSET] == RECEIVED_PACKET {
 					select {

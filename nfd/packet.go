@@ -1,4 +1,4 @@
-package nfc
+package nfd
 
 import (
 	"encoding/binary"

@@ -1,7 +1,7 @@
-package nfc
+package nfd
 
 import (
-	"ccl/go/nfc/xbee"
+	"ccl/go/nfd/xbee"
 	"context"
 	"errors"
 	"fmt"
@@ -12,15 +12,15 @@ import (
 )
 
 const (
-	BCST         = 0
-	ADDR_REQ     = 1
-	ADDR_RESP    = 2
-	P2P          = 3
-	ACK          = 4
-	SCAN_REQ     = 5
-	SCAN_RESP    = 6
-	CONNECT_REQ  = 7
-	CONNECT_RESP = 8
+	BCST        = 0
+	P2P         = 1
+	ACK         = 2
+	ADDR_REQ    = 3
+	ADDR_RESP   = 4
+	STATUS_REQ  = 5
+	STATUS_RESP = 6
+	RELAY_REQ   = 7
+	RELAY_RESP  = 8
 
 	XBEE      = 0
 	BLUETOOTH = 1
@@ -89,7 +89,7 @@ type DevDesc struct {
 	Device  Device
 }
 
-type NFC struct {
+type NearFieldDevice struct {
 	DevDesc     DevDesc
 	Seq         int
 	IPv4        string
@@ -98,7 +98,7 @@ type NFC struct {
 	TxQueue     chan TxData
 	AckQueue    chan Packet
 	DataQueue   chan Packet
-	ScanQueue   chan Packet
+	StatusQueue chan Packet
 	RxDataCh    chan []byte
 	TimerPacket TimerData
 	strategy    Strategy
@@ -111,27 +111,39 @@ type NFC struct {
 	WG     sync.WaitGroup
 }
 
-func NewNFC(ipv4 string, ipv6 string) *NFC {
+func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 	if ipv4 == "" {
 		ipv4 = DEFAULT_IPv4
 	}
 	if ipv6 == "" {
 		ipv6 = DEFAULT_IPv6
 	}
-	return &NFC{
-		IPv4:      ipv4,
-		IPv6:      ipv6,
-		Seq:       -1,
-		Nodes:     make(map[string]int),
-		TxQueue:   make(chan TxData, 64),
-		DataQueue: make(chan Packet, 3),
-		AckQueue:  make(chan Packet, 3),
-		ScanQueue: make(chan Packet, 32),
-		RxDataCh:  make(chan []byte, 64),
+	return &NearFieldDevice{
+		IPv4:        ipv4,
+		IPv6:        ipv6,
+		Seq:         -1,
+		Nodes:       make(map[string]int),
+		TxQueue:     make(chan TxData, 64),
+		DataQueue:   make(chan Packet, 3),
+		AckQueue:    make(chan Packet, 3),
+		StatusQueue: make(chan Packet, 32),
+		RxDataCh:    make(chan []byte, 64),
 	}
 }
 
-func (n *NFC) Open() error {
+func DevIdf(n *NearFieldDevice) bool {
+	portList, _ := enumerator.GetDetailedPortsList()
+	for _, port := range portList {
+		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
+		if devType, ok := DEV_LIST[id]; ok {
+			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, MIN_RSSI, nil}
+			return true
+		}
+	}
+	return false
+}
+
+func (n *NearFieldDevice) Open() error {
 	if DevIdf(n) {
 		switch n.DevDesc.DevType {
 		case XBEE:
@@ -150,24 +162,13 @@ func (n *NFC) Open() error {
 	return nil
 }
 
-func DevIdf(n *NFC) bool {
-	portList, _ := enumerator.GetDetailedPortsList()
-	for _, port := range portList {
-		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
-		if devType, ok := DEV_LIST[id]; ok {
-			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, MIN_RSSI, nil}
-			return true
-		}
-	}
-	return false
-}
-
 var (
-	before    = -1
-	ack_count = 0
+	before      = -1
+	ack_count   = 0
+	status_resp = 0
 )
 
-func WaitForAck(n *NFC, p *Packet) bool {
+func WaitForAck(n *NearFieldDevice, p *Packet) bool {
 	for {
 		select {
 		case ack := <-n.AckQueue:
@@ -185,8 +186,11 @@ func WaitForAck(n *NFC, p *Packet) bool {
 						ADDR_LIST[srcIP] = ack.SrcMac
 					}
 					fmt.Printf("INFO: %d received a ADDR_RESP for [%v]\n", time.Now().UnixMilli(), p.Seq)
-				} else if ack.PacketType == SCAN_RESP {
-					fmt.Printf("INFO: %d received a SCAN_RESP for [%v]\n", time.Now().UnixMilli(), p.Seq)
+				} else if ack.PacketType == STATUS_RESP {
+					fmt.Printf("INFO: %d received a STATUS_RESP for [%v]\n", time.Now().UnixMilli(), p.Seq)
+					status_resp++
+				} else if ack.PacketType == RELAY_RESP {
+					fmt.Printf("INFO: %d received a RELAY_RESP for [%v]\n", time.Now().UnixMilli(), p.Seq)
 				}
 				n.Mutex.Lock()
 				n.TimerPacket.Timeout = 2147483647
@@ -202,13 +206,13 @@ func WaitForAck(n *NFC, p *Packet) bool {
 	}
 }
 
-func SetNextSeq(n *NFC) {
+func SetNextSeq(n *NearFieldDevice) {
 	n.Mutex4.Lock()
 	defer n.Mutex4.Unlock()
 	n.Seq = (n.Seq + 1) % 256
 }
 
-func Sender(ctx context.Context, n *NFC) {
+func Sender(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
 	fmt.Println("sender started")
 	for {
@@ -222,6 +226,22 @@ func Sender(ctx context.Context, n *NFC) {
 				p := NewPacket(n.Seq, BCST, srcMac, BCST_MAC, tx.Data)
 				n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
 				fmt.Printf("INFO: %d send BCST %v\n", time.Now().UnixMilli(), p.String())
+			} else if tx.TxType == STATUS_REQ {
+				p := NewPacket(n.Seq, STATUS_REQ, srcMac, tx.DestMac, tx.Data)
+				n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
+				fmt.Printf("INFO: %d send STATUS_REQ %v\n", time.Now().UnixMilli(), p.String())
+				n.Mutex.Lock()
+				n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT, MAX_RETRIES}
+				n.Mutex.Unlock()
+				WaitForAck(n, p)
+			} else if tx.TxType == RELAY_REQ {
+				p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
+				n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
+				fmt.Printf("INFO: %d send RELAY_REQ %v\n", time.Now().UnixMilli(), p.String())
+				n.Mutex.Lock()
+				n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT, MAX_RETRIES}
+				n.Mutex.Unlock()
+				WaitForAck(n, p)
 			} else {
 				if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
 					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
@@ -258,7 +278,7 @@ func Sender(ctx context.Context, n *NFC) {
 	}
 }
 
-func Receiver(ctx context.Context, n *NFC) {
+func Receiver(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
 	fmt.Println("receiver started")
 	for {
@@ -271,11 +291,11 @@ func Receiver(ctx context.Context, n *NFC) {
 			if err == nil {
 				p, err := DecodePacket(data)
 				if err == nil {
-					if p.PacketType == ACK || p.PacketType == ADDR_RESP {
+					if p.PacketType == ACK || p.PacketType == ADDR_RESP || p.PacketType == RELAY_RESP {
 						n.AckQueue <- *p
-					} else if p.PacketType == SCAN_RESP {
+					} else if p.PacketType == STATUS_RESP {
 						n.AckQueue <- *p
-						n.ScanQueue <- *p
+						n.StatusQueue <- *p
 					} else {
 						n.DataQueue <- *p
 					}
@@ -285,7 +305,7 @@ func Receiver(ctx context.Context, n *NFC) {
 	}
 }
 
-func PacketHandler(ctx context.Context, n *NFC) {
+func PacketHandler(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
 	fmt.Println("handler started")
 	for {
@@ -304,26 +324,23 @@ func PacketHandler(ctx context.Context, n *NFC) {
 					} else {
 						continue
 					}
-				} else if p.PacketType == SCAN_REQ {
+				} else if p.PacketType == STATUS_REQ {
 					// Create deviceInfo and add it to the DeviceInfo channel
-					p := NewPacket(p.Seq, SCAN_RESP, n.DevDesc.Mac, p.SrcMac, CreateIPData(n, SrcIP, []byte{byte(1)}))
+					p := NewPacket(p.Seq, STATUS_RESP, n.DevDesc.Mac, p.SrcMac, CreateIPData(n, SrcIP, []byte{byte(1)}))
 					n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
-					fmt.Printf("INFO: %d received a SCAN_REQ packet, send SCAN_RESP %v\n", time.Now().UnixMilli(), p)
-				} else if p.PacketType == CONNECT_REQ {
+					fmt.Printf("INFO: %d received a STATUS_REQ packet, send STATUS_RESP %v\n", time.Now().UnixMilli(), p)
+				} else if p.PacketType == RELAY_REQ {
 					data, err := GetIPData(p.Data)
 					if err != nil {
 						fmt.Println(err)
 					}
-					fmt.Printf("INFO: %d received a CONNECT_REQ %v\n", time.Now().UnixMilli(), p.String())
-					resp, err := Ping("122.51.216.252", data)
+					fmt.Printf("INFO: %d received a RELAY_REQ %v\n", time.Now().UnixMilli(), p.String())
+					resp, err := Ping(DestIP, data)
 					if err == nil {
-						p := NewPacket(p.Seq, CONNECT_RESP, n.DevDesc.Mac, p.SrcMac, CreateIPData(n, SrcIP, resp))
+						p := NewPacket(p.Seq, RELAY_RESP, n.DevDesc.Mac, p.SrcMac, CreateIPData(n, SrcIP, resp))
 						n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
-						fmt.Printf("INFO: %d send CONNECT_RESP %v\n", time.Now().UnixMilli(), p.String())
+						fmt.Printf("INFO: %d send RELAY_RESP %v\n", time.Now().UnixMilli(), p.String())
 					}
-					// Create deviceInfo and add it to the DeviceInfo channel
-				} else if p.PacketType == CONNECT_RESP {
-					fmt.Printf("INFO: %d received a CONNECT_RESP %v\n", time.Now().UnixMilli(), p.String())
 					// Create deviceInfo and add it to the DeviceInfo channel
 				} else {
 					n.RxDataCh <- p.Data
@@ -345,7 +362,7 @@ func PacketHandler(ctx context.Context, n *NFC) {
 	}
 }
 
-func Timer(ctx context.Context, n *NFC) {
+func Timer(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
 	fmt.Println("timer started")
 	for {
@@ -362,6 +379,8 @@ func Timer(ctx context.Context, n *NFC) {
 					n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
 					fmt.Printf("INFO: %d send retransmission %v\n", time.Now().UnixMilli(), p.String())
 					n.TimerPacket.Timeout = TRANSMISSION_TIMEOUT
+				} else if n.TimerPacket.Packet.PacketType == STATUS_REQ {
+					status_resp = -1
 				}
 			}
 			time.Sleep(1 * time.Second)
@@ -369,7 +388,7 @@ func Timer(ctx context.Context, n *NFC) {
 	}
 }
 
-func ConfigHandler(ctx context.Context, n *NFC, configCh chan ConfigInfo) {
+func ConfigHandler(ctx context.Context, n *NearFieldDevice, configCh chan ConfigInfo) {
 	defer n.WG.Done()
 	fmt.Println("config handler started")
 	for {
@@ -385,39 +404,52 @@ func ConfigHandler(ctx context.Context, n *NFC, configCh chan ConfigInfo) {
 	}
 }
 
-func GetNodes(n *NFC) error {
-	fmt.Println("Start discovering nodes...")
-	addrs, err := n.DevDesc.Device.GetNodes()
-	if err != nil {
-		return err
-	}
-	p := NewPacket(0, SCAN_REQ, n.DevDesc.Mac, DEFAULT_MAC, CreateIPData(n, DEFAULT_IPv4, nil))
-	for i := range addrs {
-		SetNextSeq(n)
-		p.Seq = n.Seq
-		p.DestMac = addrs[i]
-		n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
-		fmt.Printf("INFO: %d send SCAN_REQ %v\n", time.Now().UnixMilli(), p.String())
-		n.Mutex.Lock()
-		n.TimerPacket = TimerData{*p, TRANSMISSION_TIMEOUT, MAX_RETRIES}
-		n.Mutex.Unlock()
-		WaitForAck(n, p)
-	}
-	for len(n.ScanQueue) > 0 {
-		resp := <-n.ScanQueue
-		n.Mutex3.Lock()
-		SrcIP, _, err := GetIP(resp.Data)
-		if err == nil {
-			ADDR_LIST[SrcIP] = resp.SrcMac
+func NodesDetector(ctx context.Context, n *NearFieldDevice) {
+	defer n.WG.Done()
+	fmt.Println("nodes detector started")
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("nodes detector stopped")
+			return
+		default:
+			fmt.Println("Start discovering nodes...")
+			addrs, err := n.DevDesc.Device.GetNodes()
+			fmt.Printf("Found %d nodes \n", len(addrs))
+			if err == nil {
+				for i := range addrs {
+					n.TxQueue <- TxData{CreateIPData(n, DEFAULT_IPv4, nil), DEFAULT_IPv4, addrs[i], STATUS_REQ}
+				}
+				for {
+					flag := false
+					select {
+					case resp := <-n.StatusQueue:
+						n.Mutex3.Lock()
+						SrcIP, _, err := GetIP(resp.Data)
+						if err == nil {
+							ADDR_LIST[SrcIP] = resp.SrcMac
+						}
+						n.Mutex3.Unlock()
+						n.Nodes[SrcIP] = int(resp.Data[len(resp.Data)-1])
+					default:
+						if status_resp == len(addrs) || status_resp == -1 {
+							status_resp = 0
+							flag = true
+						}
+					}
+					if flag {
+						break
+					}
+				}
+				fmt.Println("Nodes status:", n.Nodes)
+				SendICMP(n, GetMsg())
+			}
 		}
-		n.Mutex3.Unlock()
-		n.Nodes[SrcIP] = int(resp.Data[len(resp.Data)-1])
+		time.Sleep(60 * time.Second)
 	}
-	fmt.Println("Nodes status:", n.Nodes)
-	return nil
 }
 
-func SendICMP(n *NFC, data []byte) error {
+func SendICMP(n *NearFieldDevice, data []byte) error {
 	destIP := ""
 	for key := range n.Nodes {
 		if n.Nodes[key] == 1 {
@@ -425,10 +457,7 @@ func SendICMP(n *NFC, data []byte) error {
 		}
 	}
 	if destIP != "" {
-		SetNextSeq(n)
-		p := NewPacket(n.Seq, CONNECT_REQ, n.DevDesc.Mac, ADDR_LIST[destIP], CreateIPData(n, destIP, data))
-		n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac)
-		fmt.Printf("INFO: %d send CONNECT_REQ %v\n", time.Now().UnixMilli(), p.String())
+		n.TxQueue <- TxData{CreateIPData(n, "122.51.216.252", data), destIP, ADDR_LIST[destIP], RELAY_REQ}
 		return nil
 	} else {
 		fmt.Println("All nodes are offline")
@@ -436,7 +465,7 @@ func SendICMP(n *NFC, data []byte) error {
 	}
 }
 
-func (n *NFC) Init(s Strategy) error {
+func (n *NearFieldDevice) Init(s Strategy) error {
 	fmt.Println("initializing...")
 	n.strategy = s
 	err := n.Open()
@@ -448,26 +477,23 @@ func (n *NFC) Init(s Strategy) error {
 	return nil
 }
 
-func Run(ctx context.Context, configInfo chan ConfigInfo, devInfo chan DeviceInfo) error {
-	// TODO
-	return nil
-}
-
-func (n *NFC) Run(ctx context.Context) error {
+// func Run(ctx context.Context, configInfo chan ConfigInfo, devInfo chan DeviceInfo) error {
+func (n *NearFieldDevice) Run(ctx context.Context) error {
 	child_ctx, cancel = context.WithCancel(ctx)
 	n.DevDesc.Device.Start(child_ctx)
-	n.WG.Add(4)
+	n.WG.Add(5)
 	go Receiver(child_ctx, n)
 	go PacketHandler(child_ctx, n)
 	go Sender(child_ctx, n)
 	go Timer(child_ctx, n)
+	go NodesDetector(child_ctx, n)
 	// go ConfigHandler(child_ctx, n, configInfo)
 	n.running = true
 	fmt.Println("nfc started")
 	return nil
 }
 
-func (n *NFC) Stop() error {
+func (n *NearFieldDevice) Stop() error {
 	n.DevDesc.Device.Stop()
 	cancel()
 	n.WG.Wait()
@@ -476,7 +502,7 @@ func (n *NFC) Stop() error {
 	return nil
 }
 
-func (n *NFC) Read(bufs *[][]byte, sizes *[]int, offset int) (int, error) {
+func (n *NearFieldDevice) Read(bufs *[][]byte, sizes *[]int, offset int) (int, error) {
 	for i := offset; i < len(*bufs); i++ {
 		select {
 		case data := <-n.RxDataCh:
@@ -489,7 +515,7 @@ func (n *NFC) Read(bufs *[][]byte, sizes *[]int, offset int) (int, error) {
 	return len(*bufs) - offset, nil
 }
 
-func (n *NFC) Write(bufs [][]byte, offset int) (int, error) {
+func (n *NearFieldDevice) Write(bufs [][]byte, offset int) (int, error) {
 	for i := offset; i < len(bufs); i++ {
 		_, destIP, err := GetIP(bufs[i])
 		if err != nil {
@@ -499,6 +525,8 @@ func (n *NFC) Write(bufs [][]byte, offset int) (int, error) {
 		tx_type := P2P
 		if destIP == BCST_IP {
 			tx_type = BCST
+		} else if _, ok := ADDR_LIST[destIP]; !ok && len(n.Nodes) > 0 {
+			tx_type = RELAY_REQ
 		}
 		select {
 		case n.TxQueue <- TxData{bufs[i], destIP, "", tx_type}:
@@ -509,6 +537,6 @@ func (n *NFC) Write(bufs [][]byte, offset int) (int, error) {
 	return len(bufs) - offset, nil
 }
 
-func (n *NFC) BatchSize() (int, error) {
+func (n *NearFieldDevice) BatchSize() (int, error) {
 	return n.strategy.BatchSize, nil
 }

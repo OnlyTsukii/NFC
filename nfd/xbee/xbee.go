@@ -128,9 +128,6 @@ func (x *Xbee) SetMacAddr() error {
 }
 
 func (x *Xbee) GetNodes() ([]string, error) {
-	x.Mutex.Lock()
-	defer x.Mutex.Unlock()
-
 	addrs := make([]string, 0)
 	resp, err := x.Writer.GetNodes(x.Reader)
 	if err != nil {

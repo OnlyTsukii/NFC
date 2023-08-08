@@ -91,7 +91,6 @@ func (s *Writer) GetNodes(r *Reader) ([][]byte, error) {
 	for {
 		frame, err := r.GetResp(timeout, AT.FrameSeq)
 		if err != nil {
-			fmt.Printf("Found %d nodes \n", len(resp))
 			return resp, nil
 		} else {
 			timeout = RESPONSE_TIMEOUT
@@ -131,7 +130,7 @@ func (s *Writer) SendPacketWithResponse(x64addr string, data []byte, r *Reader) 
 	CMD := s.GenTransmitRequest(StrToBytes(x64addr), data)
 	packet := TransmitRequestFrameToBytes(CMD)
 	s.Port.Write(packet)
-	resp, err := r.GetResp(RESPONSE_TIMEOUT, CMD.FrameSeq)
+	resp, err := r.GetStatus(RESPONSE_TIMEOUT, CMD.FrameSeq)
 	if err != nil {
 		return err
 	}
