@@ -148,7 +148,6 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// 创建一个ICMP连接
 	conn, err := net.DialIP("ip4:icmp", nil, ipAddr)
 	if err != nil {
 		fmt.Println("Error creating ICMP connection:", err)
@@ -156,7 +155,6 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 	}
 	defer conn.Close()
 
-	// 发送ICMP消息
 	start := time.Now()
 	_, err = conn.Write(msg)
 	if err != nil {
@@ -164,9 +162,8 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// 接收并解析响应
 	reply := make([]byte, len(msg))
-	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3)) // 设置3秒超时
+	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 	if err != nil {
 		fmt.Println("Error setting read deadline:", err)
 		return nil, err
@@ -177,25 +174,22 @@ func Ping(hostname string, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// 计算往返时间
 	duration := time.Since(start)
 	fmt.Printf("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
 	return reply, nil
 }
 
 func GetMsg() []byte {
-	// 构造一个简单的ICMP消息
 	msg := make([]byte, 48)
-	msg[0] = 8  // Type: 8 (Echo Request)
-	msg[1] = 0  // Code: 0
-	msg[2] = 0  // Checksum (placeholder)
-	msg[3] = 0  // Checksum (placeholder)
-	msg[4] = 0  // Identifier (arbitrary)
-	msg[5] = 13 // Identifier (arbitrary)
-	msg[6] = 0  // Sequence Number (arbitrary)
-	msg[7] = 37 // Sequence Number (arbitrary)
+	msg[0] = 8
+	msg[1] = 0
+	msg[2] = 0
+	msg[3] = 0
+	msg[4] = 0
+	msg[5] = 13
+	msg[6] = 0
+	msg[7] = 37
 
-	// 计算校验和
 	checksum := checkSum(msg)
 	msg[2] = byte(checksum >> 8)
 	msg[3] = byte(checksum)
@@ -203,7 +197,6 @@ func GetMsg() []byte {
 	return msg
 }
 
-// 计算校验和
 func checkSum(msg []byte) uint16 {
 	sum := 0
 	for i := 0; i < len(msg)-1; i += 2 {
