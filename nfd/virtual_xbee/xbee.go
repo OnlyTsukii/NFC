@@ -1,4 +1,4 @@
-package xbee
+package vxbee
 
 import (
 	"context"
@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/tarm/serial"
 )
 
 const (
-	AT_COMMAND          = 0x08
+	AT_COMMAND          = 0x09
 	AT_COMMAND_RESPONSE = 0x88
 	TRANSMIT_REQUEST    = 0x10
 	TRANSMIT_STATUS     = 0x8B
@@ -26,6 +23,7 @@ const (
 	FRAME_TYPE_OFFSET = 3
 	FRAME_SEQ_OFFSET  = 4
 
+	AT_COMMAND_OFFSET       = 5
 	AT_RESP_STATUS_OFFSET   = 7
 	AT_RESP_RESPONSE_OFFSET = 8
 
@@ -35,6 +33,7 @@ const (
 	API_REQ_X16ADDR_OFFSET = 13
 	API_REQ_BR_OFFSET      = 15
 	API_REQ_OPTIONS_OFFSET = 16
+	API_REQ_DATA_OFFSET    = 17
 
 	API_RECV_X64ADDR_OFFSET = 4
 	API_RECV_X16ADDR_OFFSET = 12
@@ -67,26 +66,25 @@ func (d *Data) GetData() []byte {
 }
 
 type Xbee struct {
-	Port    serial.Port
-	MAC     string
-	Seq     int
-	Reader  *Reader
-	Writer  *Writer
-	Started bool
+	VirtualDevice *VirtualXbeeDevice
+	MAC           string
+	Seq           int
+	Reader        *Reader
+	Writer        *Writer
+	Started       bool
 
 	Mutex sync.Mutex
 }
 
-func NewXbee(port string, baudrate int) (*Xbee, error) {
+func NewXbee(port string, baudrate int, MACAddress string, UDPAddress string, UDPPort int) (*Xbee, error) {
+	var err error
 	x := Xbee{Seq: -1}
-	conf := &serial.Config{Name: port, Baud: baudrate, ReadTimeout: 500 * time.Millisecond}
-	p, err := serial.OpenPort(conf)
+	x.VirtualDevice, err = NewXbeeDevice(MACAddress, UDPAddress, UDPPort)
 	if err != nil {
 		return nil, err
 	}
-	x.Port = *p
-	x.Writer = NewWriter(*p)
-	x.Reader = NewReader(*p)
+	x.Writer = NewWriter(x.VirtualDevice)
+	x.Reader = NewReader(x.VirtualDevice)
 	err = x.SetMacAddr()
 	if err != nil {
 		return nil, err
@@ -163,12 +161,22 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 	x.Seq = (x.Seq + 1) % 256
 	fragments, err := GetFragments(x.Seq, data)
 	if err != nil {
+		fmt.Println(err)
 		return false
 	}
 	for _, frag := range fragments {
-		err := x.SendData(remoteAddr, frag.Encode())
-		if err != nil {
-			return false
+		count := 0
+		for x.Started {
+			err := x.SendData(remoteAddr, frag.Encode())
+			if err != nil {
+				count++
+				if count == 5 {
+					fmt.Println(err)
+					return false
+				}
+			} else {
+				break
+			}
 		}
 	}
 	return true
@@ -207,6 +215,7 @@ func (x *Xbee) Start(ctx context.Context) {
 	if !x.Reader.started {
 		x.Reader.Start(ctx)
 	}
+	x.VirtualDevice.Start(ctx)
 }
 
 func (x *Xbee) Stop() {
@@ -214,12 +223,5 @@ func (x *Xbee) Stop() {
 	if x.Reader.started {
 		x.Reader.Stop()
 	}
-}
-
-func (x *Xbee) Close() {
-	x.Started = false
-	if x.Reader.started {
-		x.Reader.Stop()
-	}
-	x.Port.Close()
+	x.VirtualDevice.Stop()
 }

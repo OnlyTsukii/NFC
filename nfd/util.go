@@ -3,11 +3,8 @@ package nfd
 import (
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"net"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func MacToHex(mac string) []byte {
@@ -15,7 +12,7 @@ func MacToHex(mac string) []byte {
 	for len(mac) > 0 {
 		hexBytes, err := hex.DecodeString(mac[:2])
 		if err != nil {
-			fmt.Println("Invalid decimal string")
+			logger.Warnf("Invalid decimal string")
 			return nil
 		}
 		hexParts = append(hexParts, hexBytes...)
@@ -42,7 +39,7 @@ func IPv4ToHex(ip string) []byte {
 	for _, part := range parts {
 		decimal, err := strconv.ParseInt(part, 10, 16)
 		if err != nil {
-			fmt.Println("Invalid decimal string")
+			logger.Warnf("Invalid decimal string")
 			return nil
 		}
 		hexParts = append(hexParts, byte(decimal))
@@ -62,15 +59,24 @@ func IPv6ToHex(ip string) []byte {
 	parts := strings.Split(ip, ":")
 	hexParts := make([]byte, 0)
 	for _, part := range parts {
+		if len(part) == 0 {
+			part = "0000"
+		} else if len(part) == 1 {
+			part = "0" + part + "00"
+		} else if len(part) == 2 {
+			part = "00" + part
+		} else if len(part) == 3 {
+			part = "0" + part[:1] + part[1:]
+		}
 		hexBytes, err := hex.DecodeString(part[:2])
 		if err != nil {
-			fmt.Println("Invalid decimal string")
+			logger.Warnf("Invalid decimal string")
 			return nil
 		}
 		hexParts = append(hexParts, hexBytes...)
 		hexBytes, err = hex.DecodeString(part[2:])
 		if err != nil {
-			fmt.Println("Invalid decimal string")
+			logger.Warnf("Invalid decimal string")
 			return nil
 		}
 		hexParts = append(hexParts, hexBytes...)
@@ -82,14 +88,19 @@ func HexToIPv6(hex []byte) string {
 	var ipParts []string
 	for len(hex) > 0 {
 		str1 := strconv.FormatInt(int64(hex[0]), 16)
-		if len(str1) == 1 {
-			str1 = "0" + str1
-		}
 		str2 := strconv.FormatInt(int64(hex[1]), 16)
-		if len(str2) == 1 {
-			str2 = "0" + str2
+		if str1 == "0" {
+			if str2 == "0" {
+				ipParts = append(ipParts, "")
+			} else {
+				ipParts = append(ipParts, str2)
+			}
+		} else {
+			if len(str2) == 1 {
+				str2 = "0" + str2
+			}
+			ipParts = append(ipParts, str1+str2)
 		}
-		ipParts = append(ipParts, str1+str2)
 		hex = hex[2:]
 	}
 	return strings.Join(ipParts, ":")
@@ -141,68 +152,68 @@ func GetIPData(packet []byte) ([]byte, error) {
 	}
 }
 
-func Ping(hostname string, msg []byte) ([]byte, error) {
-	ipAddr, err := net.ResolveIPAddr("ip4", hostname)
-	if err != nil {
-		fmt.Println("Error resolving IP address:", err)
-		return nil, err
-	}
+// func Ping(hostname string, msg []byte) ([]byte, error) {
+// 	ipAddr, err := net.ResolveIPAddr("ip4", hostname)
+// 	if err != nil {
+// 		logger.Warnf("Error resolving IP address:", err)
+// 		return nil, err
+// 	}
 
-	conn, err := net.DialIP("ip4:icmp", nil, ipAddr)
-	if err != nil {
-		fmt.Println("Error creating ICMP connection:", err)
-		return nil, err
-	}
-	defer conn.Close()
+// 	conn, err := net.DialIP("ip4:icmp", nil, ipAddr)
+// 	if err != nil {
+// 		logger.Warnf("Error creating ICMP connection:", err)
+// 		return nil, err
+// 	}
+// 	defer conn.Close()
 
-	start := time.Now()
-	_, err = conn.Write(msg)
-	if err != nil {
-		fmt.Println("Error sending ICMP message:", err)
-		return nil, err
-	}
+// 	start := time.Now()
+// 	_, err = conn.Write(msg)
+// 	if err != nil {
+// 		logger.Warnf("Error sending ICMP message:", err)
+// 		return nil, err
+// 	}
 
-	reply := make([]byte, len(msg))
-	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3))
-	if err != nil {
-		fmt.Println("Error setting read deadline:", err)
-		return nil, err
-	}
-	_, err = conn.Read(reply)
-	if err != nil {
-		fmt.Println("Error reading ICMP reply:", err)
-		return nil, err
-	}
+// 	reply := make([]byte, len(msg))
+// 	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3))
+// 	if err != nil {
+// 		logger.Warnf("Error setting read deadline:", err)
+// 		return nil, err
+// 	}
+// 	_, err = conn.Read(reply)
+// 	if err != nil {
+// 		logger.Warnf("Error reading ICMP reply:", err)
+// 		return nil, err
+// 	}
 
-	duration := time.Since(start)
-	fmt.Printf("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
-	return reply, nil
-}
+// 	duration := time.Since(start)
+// 	logger.Infof("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
+// 	return reply, nil
+// }
 
-func GetMsg() []byte {
-	msg := make([]byte, 48)
-	msg[0] = 8
-	msg[1] = 0
-	msg[2] = 0
-	msg[3] = 0
-	msg[4] = 0
-	msg[5] = 13
-	msg[6] = 0
-	msg[7] = 37
+// func GetMsg() []byte {
+// 	msg := make([]byte, 48)
+// 	msg[0] = 8
+// 	msg[1] = 0
+// 	msg[2] = 0
+// 	msg[3] = 0
+// 	msg[4] = 0
+// 	msg[5] = 13
+// 	msg[6] = 0
+// 	msg[7] = 37
 
-	checksum := checkSum(msg)
-	msg[2] = byte(checksum >> 8)
-	msg[3] = byte(checksum)
+// 	checksum := checkSum(msg)
+// 	msg[2] = byte(checksum >> 8)
+// 	msg[3] = byte(checksum)
 
-	return msg
-}
+// 	return msg
+// }
 
-func checkSum(msg []byte) uint16 {
-	sum := 0
-	for i := 0; i < len(msg)-1; i += 2 {
-		sum += int(msg[i])*256 + int(msg[i+1])
-	}
-	sum = (sum >> 16) + (sum & 0xffff)
-	sum += sum >> 16
-	return uint16(^sum)
-}
+// func checkSum(msg []byte) uint16 {
+// 	sum := 0
+// 	for i := 0; i < len(msg)-1; i += 2 {
+// 		sum += int(msg[i])*256 + int(msg[i+1])
+// 	}
+// 	sum = (sum >> 16) + (sum & 0xffff)
+// 	sum += sum >> 16
+// 	return uint16(^sum)
+// }

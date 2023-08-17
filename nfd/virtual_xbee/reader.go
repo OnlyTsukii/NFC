@@ -1,43 +1,41 @@
-package xbee
+package vxbee
 
 import (
 	"context"
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/tarm/serial"
 )
 
 const (
 	DELIMITER               = 0x7e
-	MAX_RECV_PACKET_CH_SIZE = 100
-	MAX_RECV_RESP_CH_SIZE   = 100
-	MAX_RECV_STATUS_CH_SIZE = 100
-	MAX_RECV_BYTE_CH_SIZE   = 30000
+	MAX_RECV_PACKET_CH_SIZE = 64
+	MAX_RECV_RESP_CH_SIZE   = 64
+	MAX_RECV_STATUS_CH_SIZE = 64
+	MAX_RECV_BYTE_CH_SIZE   = 10000
 )
 
 var child_ctx, cancel = context.WithCancel(context.TODO())
 
 type Reader struct {
-	Port         serial.Port
-	RecvRespCh   chan []byte
-	RecvPacketCh chan []byte
-	RecvByteCh   chan byte
-	RecvStatusCh chan []byte
-	started      bool
+	VirtualDevice *VirtualXbeeDevice
+	RecvRespCh    chan []byte
+	RecvPacketCh  chan []byte
+	RecvByteCh    chan byte
+	RecvStatusCh  chan []byte
+	started       bool
 
 	Mutex sync.Mutex
 	wg    sync.WaitGroup
 }
 
-func NewReader(port serial.Port) *Reader {
+func NewReader(VirtualDevice *VirtualXbeeDevice) *Reader {
 	return &Reader{
-		Port:         port,
-		RecvRespCh:   make(chan []byte, MAX_RECV_RESP_CH_SIZE),
-		RecvPacketCh: make(chan []byte, MAX_RECV_PACKET_CH_SIZE),
-		RecvStatusCh: make(chan []byte, MAX_RECV_STATUS_CH_SIZE),
-		RecvByteCh:   make(chan byte, MAX_RECV_BYTE_CH_SIZE),
+		VirtualDevice: VirtualDevice,
+		RecvRespCh:    make(chan []byte, MAX_RECV_RESP_CH_SIZE),
+		RecvPacketCh:  make(chan []byte, MAX_RECV_PACKET_CH_SIZE),
+		RecvStatusCh:  make(chan []byte, MAX_RECV_STATUS_CH_SIZE),
+		RecvByteCh:    make(chan byte, MAX_RECV_BYTE_CH_SIZE),
 	}
 }
 
@@ -105,10 +103,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 				frame = append(frame, reader.ReadBytes(ctx, int(frame[LEN_END_OFFSET])+1)...)
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// if len(frame) == 29 {
-				// 	logger.Infof(len(frame))
-				// }
-				// print(frame)
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE {
 					select {
 					case reader.RecvRespCh <- temp:
@@ -131,9 +125,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 						reader.RecvPacketCh <- temp
 					}
 				}
-				// else if frame[FRAME_TYPE_OFFSET] == 0x8d {
-				// 	print(frame)
-				// }
 				frame = make([]byte, 0)
 			}
 		case <-ctx.Done():
@@ -160,10 +151,9 @@ func (reader *Reader) ReadBytes(ctx context.Context, count int) []byte {
 func (reader *Reader) ReadByte(ctx context.Context) {
 	defer reader.wg.Done()
 	for {
-		data := make([]byte, 1)
-		reader.Port.Read(data)
 		select {
-		case reader.RecvByteCh <- data[0]:
+		case b := <-reader.VirtualDevice.RecvData:
+			reader.RecvByteCh <- b
 		case <-ctx.Done():
 			return
 		default:
@@ -192,8 +182,8 @@ func (reader *Reader) Start(ctx context.Context) {
 }
 
 func (reader *Reader) Stop() {
+	reader.started = false
 	reader.Clear()
 	cancel()
 	reader.wg.Wait()
-	reader.started = false
 }

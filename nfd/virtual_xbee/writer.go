@@ -1,9 +1,7 @@
-package xbee
+package vxbee
 
 import (
 	"errors"
-
-	"github.com/tarm/serial"
 )
 
 const (
@@ -12,15 +10,52 @@ const (
 )
 
 type Writer struct {
-	Port serial.Port
-	Seq  int
+	VirtualDevice *VirtualXbeeDevice
+	Seq           int
 }
 
-func NewWriter(port serial.Port) *Writer {
+func NewWriter(VirtualDevice *VirtualXbeeDevice) *Writer {
 	return &Writer{
-		Port: port,
-		Seq:  0,
+		VirtualDevice: VirtualDevice,
+		Seq:           0,
 	}
+}
+
+type ATCmdRespFrame struct {
+	Delimiter byte
+	LenStart  byte
+	LenEnd    byte
+	FrameType byte
+	FrameSeq  byte
+	Command   []byte
+	Status    byte
+	Data      []byte
+	CheckSum  byte
+}
+
+type TransmitStatusFrame struct {
+	Delimiter       byte
+	LenStart        byte
+	LenEnd          byte
+	FrameType       byte
+	FrameSeq        byte
+	X16Addr         []byte
+	RetryCount      byte
+	DeliveryStatus  byte
+	DiscoveryStatus byte
+	CheckSum        byte
+}
+
+type ReceivePacketFrame struct {
+	Delimiter byte
+	LenStart  byte
+	LenEnd    byte
+	FrameType byte
+	X64Addr   []byte
+	X16Addr   []byte
+	Options   byte
+	Data      []byte
+	CheckSum  byte
 }
 
 type ATCmdFrame struct {
@@ -45,6 +80,54 @@ type TransmitRequestFrame struct {
 	Options   byte
 	Data      []byte
 	CheckSum  byte
+}
+
+func GenATCmdResp(cmd []byte, seq byte, data []byte) *ATCmdRespFrame {
+	end := 1 + 1 + len(cmd) + 1 + len(data)
+	CMD := ATCmdRespFrame{
+		Delimiter: 0x7e,
+		LenStart:  0x00,
+		LenEnd:    byte(end),
+		FrameType: 0x88,
+		FrameSeq:  seq,
+		Command:   cmd,
+		Status:    0x00,
+		Data:      data,
+	}
+	CMD.CheckSum = GenCheckSum(ATCmdRespFrameToBytes(&CMD))
+	return &CMD
+}
+
+func GenTransmitStatus(seq byte) *TransmitStatusFrame {
+	CMD := TransmitStatusFrame{
+		Delimiter:       0x7e,
+		LenStart:        0x00,
+		LenEnd:          0x07,
+		FrameType:       0x8B,
+		FrameSeq:        seq,
+		X16Addr:         []byte{0xFF, 0xFE},
+		RetryCount:      0x01,
+		DeliveryStatus:  0x00,
+		DiscoveryStatus: 0x00,
+	}
+	CMD.CheckSum = GenCheckSum(TransmitStatusFrameToBytes(&CMD))
+	return &CMD
+}
+
+func GenReceivePacket(x64addr []byte, data []byte) *ReceivePacketFrame {
+	end := 1 + 8 + 2 + 1 + len(data)
+	CMD := ReceivePacketFrame{
+		Delimiter: 0x7e,
+		LenStart:  0x00,
+		LenEnd:    byte(end),
+		FrameType: 0x90,
+		X64Addr:   x64addr,
+		X16Addr:   []byte{0xFF, 0xFE},
+		Options:   0x01,
+		Data:      data,
+	}
+	CMD.CheckSum = GenCheckSum(ReceivePacketFrameToBytes(&CMD))
+	return &CMD
 }
 
 func (s *Writer) GenATCmd(cmd string) *ATCmdFrame {
@@ -85,7 +168,7 @@ func (s *Writer) GenTransmitRequest(x64addr []byte, data []byte) *TransmitReques
 func (s *Writer) GetNodes(r *Reader) ([][]byte, error) {
 	resp := make([][]byte, 0)
 	AT := s.GenATCmd("ND")
-	s.Port.Write(ATCmdFrameToBytes(AT))
+	s.VirtualDevice.Write(ATCmdFrameToBytes(AT), "")
 	timeout := 13
 	for {
 		frame, err := r.GetResp(timeout, AT.FrameSeq)
@@ -106,7 +189,7 @@ func (s *Writer) SendATCmdWithResponse(cmd []string, r *Reader) (map[string][]by
 	resp := make(map[string][]byte, 0)
 	for i, v := range cmd {
 		AT := s.GenATCmd(v)
-		s.Port.Write(ATCmdFrameToBytes(AT))
+		s.VirtualDevice.Write(ATCmdFrameToBytes(AT), "")
 		res, err := r.GetResp(RESPONSE_TIMEOUT, AT.FrameSeq)
 		if err != nil {
 			return nil, err
@@ -127,7 +210,10 @@ func (s *Writer) SendPacketWithResponse(x64addr string, data []byte, r *Reader) 
 	}
 	CMD := s.GenTransmitRequest(StrToBytes(x64addr), data)
 	packet := TransmitRequestFrameToBytes(CMD)
-	s.Port.Write(packet)
+	err := s.VirtualDevice.Write(packet, x64addr)
+	if err != nil {
+		return err
+	}
 	resp, err := r.GetStatus(RESPONSE_TIMEOUT, CMD.FrameSeq)
 	if err != nil {
 		return err

@@ -1,4 +1,4 @@
-package xbee
+package vxbee
 
 import (
 	"errors"
