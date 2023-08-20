@@ -1,15 +1,18 @@
 package main
 
 import (
-	"ccl/go/log"
 	"ccl/go/nfd"
 	"context"
 	"fmt"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"gitee.com/czy_hit/log"
 )
 
-func StartDevice() {
-	ctx, _ := context.WithCancel(context.Background())
+func StartDevice(ctx context.Context) {
+
 	strategy := nfd.Strategy{0}
 	configCh := make(chan nfd.ConfigInfo)
 	deviceCh := make(chan nfd.DeviceInfo)
@@ -27,14 +30,17 @@ func StartDevice() {
 
 func main() {
 	_, err := log.NewLogger()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
 
 	data = data[:2048]
 
-	go StartDevice()
+	go StartDevice(ctx)
 
-	for {
+	select {
+	case <-ctx.Done():
 	}
 }

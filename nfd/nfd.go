@@ -1,7 +1,7 @@
 package nfd
 
 import (
-	"ccl/go/log"
+	"gitee.com/czy_hit/log"
 
 	// Test for virtual device
 	// If you need to use a physical device, replace it with "ccl/go/nfd/xbee"
