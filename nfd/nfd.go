@@ -145,8 +145,9 @@ type NearFieldDevice struct {
 	UDPPort     int
 	MACAddress  string
 
-	Mutex sync.Mutex
-	WG    sync.WaitGroup
+	Mutex  sync.Mutex
+	Mutex2 sync.Mutex
+	WG     sync.WaitGroup
 }
 
 // func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
@@ -229,7 +230,7 @@ func NewNearFieldDevice(ipv4 string, ipv6 string, MACAddress string, UDPAddress 
 
 // Test for virtual device
 // If you need to use a physical device, replace it with the code commented out above
-func (n *NearFieldDevice) TestOpen() error {
+func (n *NearFieldDevice) Open() error {
 	xbee, err := xbee.NewXbee(n.DevDesc.DevPort, 115200, n.MACAddress, n.UDPAddress, n.UDPPort)
 	if err != nil {
 		return err
@@ -281,12 +282,14 @@ func WaitForAck(n *NearFieldDevice, p *Packet) bool {
 
 func Sender(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["Sender"] {
 		n.Started["Sender"] = true
 		logger.Infof("Sender Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case tx := <-n.TxQueue:
@@ -363,7 +366,9 @@ func Sender(ctx context.Context, n *NearFieldDevice) {
 				}
 			}
 		case <-ctx.Done():
+			n.Mutex2.Lock()
 			n.Started["Sender"] = false
+			n.Mutex2.Unlock()
 			logger.Infof("Sender Stopped")
 			return
 		}
@@ -372,17 +377,21 @@ func Sender(ctx context.Context, n *NearFieldDevice) {
 
 func Receiver(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["Receiver"] {
 		n.Started["Receiver"] = true
 		logger.Infof("Receiver Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Infof("Receiver Stopped")
+			n.Mutex2.Lock()
 			n.Started["Receiver"] = false
+			n.Mutex2.Unlock()
 			return
 		default:
 			data, err := n.DevDesc.Device.ReceivePacket()
@@ -405,12 +414,14 @@ func Receiver(ctx context.Context, n *NearFieldDevice) {
 
 func PacketHandler(ctx context.Context, n *NearFieldDevice, deviceCh chan DeviceInfo) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["PacketHandler"] {
 		n.Started["PacketHandler"] = true
 		logger.Infof("PacketHandler Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case p := <-n.DataQueue:
@@ -448,7 +459,9 @@ func PacketHandler(ctx context.Context, n *NearFieldDevice, deviceCh chan Device
 			}
 		case <-ctx.Done():
 			logger.Infof("PacketHandler Stopped")
+			n.Mutex2.Lock()
 			n.Started["PacketHandler"] = false
+			n.Mutex2.Unlock()
 			return
 		}
 	}
@@ -456,16 +469,20 @@ func PacketHandler(ctx context.Context, n *NearFieldDevice, deviceCh chan Device
 
 func Timer(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["Timer"] {
 		n.Started["Timer"] = true
 		logger.Infof("Timer Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
+			n.Mutex2.Lock()
 			n.Started["Timer"] = false
+			n.Mutex2.Unlock()
 			logger.Infof("Timer Stopped")
 			return
 		default:
@@ -491,16 +508,20 @@ func Timer(ctx context.Context, n *NearFieldDevice) {
 
 func NodeDetector(ctx context.Context, n *NearFieldDevice) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["NodeDetector"] {
 		n.Started["NodeDetector"] = true
 		logger.Infof("NodeDetector Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
+			n.Mutex2.Lock()
 			n.Started["NodeDetector"] = false
+			n.Mutex2.Unlock()
 			logger.Infof("NodeDetector Stopped")
 			return
 		default:
@@ -565,16 +586,20 @@ func NodeDetector(ctx context.Context, n *NearFieldDevice) {
 
 func ConfigHandler(ctx context.Context, n *NearFieldDevice, configCh chan ConfigInfo, deviceCh chan DeviceInfo) {
 	defer n.WG.Done()
+	n.Mutex2.Lock()
 	if !n.Started["ConfigHandler"] {
 		n.Started["ConfigHandler"] = true
 		logger.Infof("ConfigHandler Started")
 	} else {
 		return
 	}
+	n.Mutex2.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
+			n.Mutex2.Lock()
 			n.Started["ConfigHandler"] = false
+			n.Mutex2.Unlock()
 			logger.Infof("ConfigHandler Stopped")
 			return
 		case config := <-configCh:
@@ -597,8 +622,7 @@ func (n *NearFieldDevice) Init(s Strategy) error {
 	logger = log.GetLogger()
 	logger.Infof("Initializing...")
 	n.strategy = s
-	// err := n.Open()
-	err := n.TestOpen()
+	err := n.Open()
 	if err != nil {
 		logger.Warnf("Initialize failed")
 		return err
@@ -614,13 +638,13 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 	}
 	child_ctx, cancel = context.WithCancel(ctx)
 	n.DevDesc.Device.Start(child_ctx)
-	n.WG.Add(6)
+	n.WG.Add(5)
 	go Receiver(child_ctx, n)
 	go PacketHandler(child_ctx, n, devInfo)
 	go Timer(child_ctx, n)
 	go Sender(child_ctx, n)
 	go ConfigHandler(child_ctx, n, configInfo, devInfo)
-	go NodeDetector(child_ctx, n)
+	// go NodeDetector(child_ctx, n)
 	return nil
 }
 
@@ -661,7 +685,7 @@ func (n *NearFieldDevice) Write(bufs [][]byte, offset int) (int, error) {
 			// If the ADDR_LIST contains all nodes in the current network,
 			// but the destination IP address of the packet is not in it,
 			// the packet is considered to be of the RELAY_REQ type,
-			// which needs to be relayed by other devices
+			// which needs to be relayed to server by other nodes
 			tx_type = RELAY_REQ
 		}
 		select {

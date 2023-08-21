@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"gitee.com/czy_hit/log"
 )
@@ -22,10 +21,10 @@ func StartDevice(ctx context.Context) {
 	// time.Sleep(3 * time.Second)
 	// configCh <- nfd.ConfigInfo{nfd.SERACH_NODES_REQ, 0, ""}
 	// fmt.Println(<-deviceCh)
-	time.Sleep(5 * time.Second)
-	for i := 0; i < 20; i++ {
-		n.Write([][]byte{data}, 0)
-	}
+	// time.Sleep(3 * time.Second)
+	// for i := 0; i < 20; i++ {
+	// 	n.Write([][]byte{data}, 0)
+	// }
 }
 
 func main() {

@@ -47,3 +47,5 @@
   ```
 
   此外，还需将 nfd/virtual_xbee/virtual_xbee_device.go 中的 peer 修改为对端的MAC地址。
+
+  data.go中模拟了一个网络层报文，如果需要使用data.go中的数据进行测试，需要修改报文中对应的源和目的IP地址。
