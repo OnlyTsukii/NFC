@@ -19,14 +19,13 @@ var ADDR_LIST = map[string]string{
 	"0013a20041bb7684": "localhost:8002",
 }
 
-var peer = "0013a20041bb7684"
-
 var child_ctx2, cancel2 = context.WithCancel(context.TODO())
 
 type VirtualXbeeDevice struct {
 	MACAddress string
 	IPAddress  string
 	Port       int
+	Peer       string
 	Conn       *net.UDPConn
 	RecvData   chan byte
 	WG         sync.WaitGroup
@@ -51,6 +50,12 @@ func NewXbeeDevice(macAddress string, ipAddress string, port int) (*VirtualXbeeD
 		RecvData:   make(chan byte, 10000),
 	}
 
+	if macAddress == "0013a20041bb7684" {
+		device.Peer = "0013a20041bb76a4"
+	} else if macAddress == "0013a20041bb76a4" {
+		device.Peer = "0013a20041bb7684"
+	}
+
 	return device, nil
 }
 
@@ -58,7 +63,7 @@ func (d *VirtualXbeeDevice) Write(data []byte, remote string) error {
 	if remote != "" {
 		remoteAddr, err := net.ResolveUDPAddr("udp", ADDR_LIST[remote])
 		if ADDR_LIST[remote] == "" {
-			remoteAddr, err = net.ResolveUDPAddr("udp", ADDR_LIST[peer])
+			remoteAddr, err = net.ResolveUDPAddr("udp", ADDR_LIST[d.Peer])
 		}
 		if err != nil {
 			return err
@@ -66,7 +71,6 @@ func (d *VirtualXbeeDevice) Write(data []byte, remote string) error {
 
 		_, err = d.Conn.WriteToUDP(data, remoteAddr)
 		if err != nil {
-			fmt.Println(err)
 			return err
 		}
 	}
@@ -85,7 +89,7 @@ func (d *VirtualXbeeDevice) Write(data []byte, remote string) error {
 			}
 		} else if data[AT_COMMAND_OFFSET] == AT_ND[0] && data[AT_COMMAND_OFFSET+1] == AT_ND[1] {
 			prefix := []byte{0xFF, 0xFE}
-			x64addr, _ := hex.DecodeString(peer)
+			x64addr, _ := hex.DecodeString(d.Peer)
 			suffix := []byte{0x20, 0x00, 0xFF, 0xFE, 0x01, 0x00, 0xC1, 0x05, 0x10, 0x1E}
 			body := append(append(prefix, x64addr...), suffix...)
 			resp := ATCmdRespFrameToBytes(GenATCmdResp(AT_ND, data[FRAME_SEQ_OFFSET], body))

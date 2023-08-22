@@ -52,10 +52,8 @@ var (
 
 	ADDR_LIST = map[string]string{}
 
-	child_ctx, cancel = context.WithCancel(context.TODO())
+	logger log.Logger
 )
-
-var logger log.Logger
 
 type Strategy struct {
 	BatchSize int
@@ -137,7 +135,7 @@ type NearFieldDevice struct {
 	StatusQueue chan Packet
 	RxData      chan []byte
 	TimerPacket TimerData
-	strategy    Strategy
+	Strategy    Strategy
 	Running     bool
 	Stopped     bool
 	Started     map[string]bool
@@ -148,6 +146,12 @@ type NearFieldDevice struct {
 	Mutex  sync.Mutex
 	Mutex2 sync.Mutex
 	WG     sync.WaitGroup
+
+	before      int
+	ack_count   int
+	status_resp int
+	context     context.Context
+	cancel      context.CancelFunc
 }
 
 // func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
@@ -189,7 +193,7 @@ func NewNearFieldDevice(ipv4 string, ipv6 string, MACAddress string, UDPAddress 
 		DataQueue:   make(chan Packet, 3),
 		AckQueue:    make(chan Packet, 3),
 		StatusQueue: make(chan Packet, 32),
-		RxData:      make(chan []byte, 64),
+		RxData:      make(chan []byte, 128),
 		Started:     make(map[string]bool),
 		UDPAddress:  UDPAddress,
 		UDPPort:     UDPPort,
@@ -240,142 +244,153 @@ func (n *NearFieldDevice) Open() error {
 	return nil
 }
 
-var (
-	before      = -1
-	ack_count   = 0
-	status_resp = 0
-)
-
-func WaitForAck(n *NearFieldDevice, p *Packet) bool {
+func (n *NearFieldDevice) WaitForAck(seq int) bool {
+	count := 0
 	for {
 		select {
 		case ack := <-n.AckQueue:
-			if ack.Seq == p.Seq {
+			if ack.Seq == seq {
 				if ack.PacketType == ACK {
-					if ack.Seq != before {
-						logger.Infof("received a ACK for [%v]", p.Seq)
-						ack_count++
-						logger.Infof("count: %d", ack_count)
-						before = ack.Seq
+					if ack.Seq != n.before {
+						logger.Infof("received a ACK for [%v]", seq)
+						n.ack_count++
+						logger.Infof("count: %d", n.ack_count)
+						n.before = ack.Seq
 					}
 				} else if ack.PacketType == ADDR_RESP {
 					srcIP, _, err := GetIP(ack.Data)
 					if err == nil {
 						ADDR_LIST[srcIP] = ack.SrcMac
 					}
-					logger.Infof("received a ADDR_RESP for [%d]", p.Seq)
+					logger.Infof("received a ADDR_RESP for [%d]", seq)
 				} else if ack.PacketType == STATUS_RESP {
-					logger.Infof("received a STATUS_RESP for [%d]", p.Seq)
-					status_resp++
+					logger.Infof("received a STATUS_RESP for [%d]", seq)
+					n.status_resp++
 				}
 				n.TimerPacket.Timeout = 2147483647
 				return true
 			}
 		default:
 			if n.TimerPacket.Retries == 0 {
-				logger.Warnf("stop waiting for ack")
+				for count < RTT {
+					count++
+					time.Sleep(1 * time.Second)
+					if len(n.AckQueue) > 0 {
+						break
+					}
+				}
+				if count == RTT {
+					logger.Warnf("stop waiting for ack")
+					return false
+				}
+			}
+		}
+	}
+}
+
+func (n *NearFieldDevice) Send(tx TxData) bool {
+	n.Seq = (n.Seq + 1) % 256
+	srcMac := n.DevDesc.MAC
+
+	if tx.TxType == BCST {
+		p := NewPacket(n.Seq, BCST, srcMac, BCST_MAC, tx.Data)
+		if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+			logger.Infof("send BCST %v", p.String())
+			return true
+		} else {
+			logger.Warnf("send BCST packet failed")
+			return false
+		}
+	} else if tx.TxType == STATUS_REQ {
+		p := NewPacket(n.Seq, STATUS_REQ, srcMac, tx.DestMac, tx.Data)
+		if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+			n.TimerPacket = TimerData{*p, RTT, 0}
+			if n.WaitForAck(p.Seq) {
+				logger.Infof("send STATUS_REQ %v", p.String())
+				return true
+			} else {
+				logger.Warnf("a STATUS_REQ was sent, but no STATUS_RESP was received")
+				return false
+			}
+		} else {
+			logger.Warnf("send STATUS_REQ packet failed")
+			return false
+		}
+	} else if tx.TxType == STATUS_RESP {
+		p := NewPacket(n.Seq, STATUS_RESP, n.DevDesc.MAC, tx.DestMac, tx.Data)
+		if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+			logger.Infof("send STATUS_RESP %v", p)
+			return true
+		} else {
+			logger.Warnf("send STATUS_RESP packet failed")
+			return false
+		}
+	} else if tx.TxType == RELAY_REQ {
+		p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
+		for key := range n.Nodes {
+			if n.Nodes[key] == 1 {
+				p.DestMac = ADDR_LIST[key]
+				break
+			}
+		}
+		if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+			logger.Infof("send RELAY_REQ %v", p.String())
+			return true
+		} else {
+			logger.Warnf("send RELAY_REQ packet failed")
+			return false
+		}
+	} else {
+		if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
+			p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
+			if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+				n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
+				if n.WaitForAck(p.Seq) {
+					logger.Infof("send P2P %v", p.String())
+					return true
+				} else {
+					logger.Warnf("a P2P was sent, but no ACK was received")
+					return false
+				}
+			} else {
+				logger.Warnf("send P2P packet failed")
+				return false
+			}
+		} else {
+			p := NewPacket(n.Seq, ADDR_REQ, srcMac, BCST_MAC, CreateIPData(n, tx.DestIP, nil))
+			if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+				logger.Infof("send ADDR_REQ %v", p.String())
+				n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES - 2}
+				if n.WaitForAck(p.Seq) {
+					n.Seq = (n.Seq + 1) % 256
+					destMac = ADDR_LIST[tx.DestIP]
+					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
+					if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
+						n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
+						if n.WaitForAck(p.Seq) {
+							logger.Infof("send P2P %v", p.String())
+							return true
+						} else {
+							logger.Warnf("a P2P was sent, but no ACK was received")
+							return false
+						}
+					} else {
+						logger.Warnf("send P2P packet failed")
+						return false
+					}
+				} else {
+					logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
+					return false
+				}
+			} else {
+				logger.Warnf("send ADDR_REQ packet failed")
 				return false
 			}
 		}
 	}
 }
 
-func Sender(ctx context.Context, n *NearFieldDevice) {
-	defer n.WG.Done()
-	n.Mutex2.Lock()
-	if !n.Started["Sender"] {
-		n.Started["Sender"] = true
-		logger.Infof("Sender Started")
-	} else {
-		return
-	}
-	n.Mutex2.Unlock()
-	for {
-		select {
-		case tx := <-n.TxQueue:
-
-			n.Seq = (n.Seq + 1) % 256
-			srcMac := n.DevDesc.MAC
-
-			if tx.TxType == BCST {
-				p := NewPacket(n.Seq, BCST, srcMac, BCST_MAC, tx.Data)
-				if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-					logger.Infof("send BCST %v", p.String())
-				} else {
-					logger.Warnf("send BCST packet failed")
-				}
-			} else if tx.TxType == STATUS_REQ {
-				p := NewPacket(n.Seq, STATUS_REQ, srcMac, tx.DestMac, tx.Data)
-				if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-					logger.Infof("send STATUS_REQ %v", p.String())
-					n.TimerPacket = TimerData{*p, RTT, 0}
-					WaitForAck(n, p)
-				} else {
-					logger.Warnf("send STATUS_REQ packet failed")
-				}
-			} else if tx.TxType == STATUS_RESP {
-				p := NewPacket(n.Seq, STATUS_RESP, n.DevDesc.MAC, tx.DestMac, tx.Data)
-				if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-					logger.Infof("send STATUS_RESP %v", p)
-				} else {
-					logger.Warnf("send STATUS_RESP packet failed")
-				}
-			} else if tx.TxType == RELAY_REQ {
-				p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
-				for key := range n.Nodes {
-					if n.Nodes[key] == 1 {
-						p.DestMac = ADDR_LIST[key]
-						break
-					}
-				}
-				if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-					logger.Infof("send RELAY_REQ %v", p.String())
-				} else {
-					logger.Warnf("send RELAY_REQ packet failed")
-				}
-			} else {
-				if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
-					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
-					if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-						logger.Infof("send P2P %v", p.String())
-						n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
-						WaitForAck(n, p)
-					} else {
-						logger.Warnf("send P2P packet failed")
-					}
-				} else {
-					p := NewPacket(n.Seq, ADDR_REQ, srcMac, BCST_MAC, CreateIPData(n, tx.DestIP, nil))
-					if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-						logger.Infof("send ADDR_REQ %v", p.String())
-						n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
-						if WaitForAck(n, p) {
-							n.Seq = (n.Seq + 1) % 256
-							destMac = ADDR_LIST[tx.DestIP]
-							p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
-							if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
-								logger.Infof("send P2P %v", p.String())
-								n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
-								WaitForAck(n, p)
-							} else {
-								logger.Warnf("send P2P packet failed")
-							}
-						}
-					} else {
-						logger.Warnf("send ADDR_REQ packet failed")
-					}
-				}
-			}
-		case <-ctx.Done():
-			n.Mutex2.Lock()
-			n.Started["Sender"] = false
-			n.Mutex2.Unlock()
-			logger.Infof("Sender Stopped")
-			return
-		}
-	}
-}
-
-func Receiver(ctx context.Context, n *NearFieldDevice) {
+func (n *NearFieldDevice) Receiver(ctx context.Context) {
 	defer n.WG.Done()
 	n.Mutex2.Lock()
 	if !n.Started["Receiver"] {
@@ -412,7 +427,7 @@ func Receiver(ctx context.Context, n *NearFieldDevice) {
 	}
 }
 
-func PacketHandler(ctx context.Context, n *NearFieldDevice, deviceCh chan DeviceInfo) {
+func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan DeviceInfo) {
 	defer n.WG.Done()
 	n.Mutex2.Lock()
 	if !n.Started["PacketHandler"] {
@@ -467,7 +482,7 @@ func PacketHandler(ctx context.Context, n *NearFieldDevice, deviceCh chan Device
 	}
 }
 
-func Timer(ctx context.Context, n *NearFieldDevice) {
+func (n *NearFieldDevice) Timer(ctx context.Context) {
 	defer n.WG.Done()
 	n.Mutex2.Lock()
 	if !n.Started["Timer"] {
@@ -489,7 +504,6 @@ func Timer(ctx context.Context, n *NearFieldDevice) {
 			n.TimerPacket.Timeout--
 			if n.TimerPacket.Timeout == 0 {
 				if n.TimerPacket.Retries > 0 {
-					n.TimerPacket.Retries--
 					p := n.TimerPacket.Packet
 					if n.DevDesc.Device.SendPacket(p.Encode(), p.DestMac) {
 						logger.Infof("send RT %v", p.String())
@@ -497,8 +511,9 @@ func Timer(ctx context.Context, n *NearFieldDevice) {
 					} else {
 						logger.Warnf("send RT packet failed")
 					}
+					n.TimerPacket.Retries--
 				} else if n.TimerPacket.Packet.PacketType == STATUS_REQ {
-					status_resp = -1
+					n.status_resp = -1
 				}
 			}
 			time.Sleep(1 * time.Second)
@@ -506,7 +521,7 @@ func Timer(ctx context.Context, n *NearFieldDevice) {
 	}
 }
 
-func NodeDetector(ctx context.Context, n *NearFieldDevice) {
+func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 	defer n.WG.Done()
 	n.Mutex2.Lock()
 	if !n.Started["NodeDetector"] {
@@ -546,7 +561,7 @@ func NodeDetector(ctx context.Context, n *NearFieldDevice) {
 						n.Mutex.Unlock()
 						keys[SrcIP] = 1
 					default:
-						if status_resp == len(addrs) {
+						if n.status_resp == len(addrs) {
 							n.Mutex.Lock()
 							for key := range ADDR_LIST {
 								if _, ok := keys[key]; !ok {
@@ -559,10 +574,10 @@ func NodeDetector(ctx context.Context, n *NearFieldDevice) {
 								}
 							}
 							n.Mutex.Unlock()
-							status_resp = 0
+							n.status_resp = 0
 							flag = true
-						} else if status_resp == -1 {
-							status_resp = 0
+						} else if n.status_resp == -1 {
+							n.status_resp = 0
 							flag = true
 						}
 					}
@@ -584,7 +599,7 @@ func NodeDetector(ctx context.Context, n *NearFieldDevice) {
 	}
 }
 
-func ConfigHandler(ctx context.Context, n *NearFieldDevice, configCh chan ConfigInfo, deviceCh chan DeviceInfo) {
+func (n *NearFieldDevice) ConfigHandler(ctx context.Context, configCh chan ConfigInfo, deviceCh chan DeviceInfo) {
 	defer n.WG.Done()
 	n.Mutex2.Lock()
 	if !n.Started["ConfigHandler"] {
@@ -621,7 +636,7 @@ func ConfigHandler(ctx context.Context, n *NearFieldDevice, configCh chan Config
 func (n *NearFieldDevice) Init(s Strategy) error {
 	logger = log.GetLogger()
 	logger.Infof("Initializing...")
-	n.strategy = s
+	n.Strategy = s
 	err := n.Open()
 	if err != nil {
 		logger.Warnf("Initialize failed")
@@ -636,15 +651,14 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 		logger.Warnf("Please initialize device first")
 		return errors.New("run failed")
 	}
-	child_ctx, cancel = context.WithCancel(ctx)
-	n.DevDesc.Device.Start(child_ctx)
-	n.WG.Add(5)
-	go Receiver(child_ctx, n)
-	go PacketHandler(child_ctx, n, devInfo)
-	go Timer(child_ctx, n)
-	go Sender(child_ctx, n)
-	go ConfigHandler(child_ctx, n, configInfo, devInfo)
-	// go NodeDetector(child_ctx, n)
+	n.context, n.cancel = context.WithCancel(ctx)
+	n.DevDesc.Device.Start(n.context)
+	n.WG.Add(4)
+	go n.Receiver(n.context)
+	go n.PacketHandler(n.context, devInfo)
+	go n.Timer(n.context)
+	go n.ConfigHandler(n.context, configInfo, devInfo)
+	// go NodeDetector(child_ctx)
 	return nil
 }
 
@@ -654,27 +668,31 @@ func (n *NearFieldDevice) Stop() error {
 		return errors.New("stop failed")
 	}
 	n.DevDesc.Device.Stop()
-	cancel()
+	n.cancel()
 	n.WG.Wait()
 	return nil
 }
 
 func (n *NearFieldDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
-	for i := offset; i < len(bufs); i++ {
+	batchSize, err := n.BatchSize()
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < batchSize; i++ {
 		select {
 		case data := <-n.RxData:
-			bufs[i] = data
+			copy(bufs[i][offset:], data)
 			sizes[i] = len(data)
 		default:
-			return i - offset, errors.New("rx queue is empty")
+			return i, errors.New("rx queue is empty")
 		}
 	}
-	return len(bufs) - offset, nil
+	return len(bufs), nil
 }
 
 func (n *NearFieldDevice) Write(bufs [][]byte, offset int) (int, error) {
 	for i := offset; i < len(bufs); i++ {
-		_, destIP, err := GetIP(bufs[i])
+		_, destIP, err := GetIP(bufs[i][offset:])
 		if err != nil {
 			return i - offset, err
 		}
@@ -688,15 +706,14 @@ func (n *NearFieldDevice) Write(bufs [][]byte, offset int) (int, error) {
 			// which needs to be relayed to server by other nodes
 			tx_type = RELAY_REQ
 		}
-		select {
-		case n.TxQueue <- TxData{bufs[i], destIP, "", tx_type}:
-		default:
-			return i - offset, errors.New("tx queue is full")
+		tx := TxData{bufs[i], destIP, "", tx_type}
+		if !n.Send(tx) {
+			return i, errors.New("send packet failed")
 		}
 	}
-	return len(bufs) - offset, nil
+	return len(bufs), nil
 }
 
 func (n *NearFieldDevice) BatchSize() (int, error) {
-	return n.strategy.BatchSize, nil
+	return n.Strategy.BatchSize, nil
 }

@@ -161,7 +161,6 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 	x.Seq = (x.Seq + 1) % 256
 	fragments, err := GetFragments(x.Seq, data)
 	if err != nil {
-		fmt.Println(err)
 		return false
 	}
 	for _, frag := range fragments {
@@ -171,7 +170,6 @@ func (x *Xbee) SendPacket(data []byte, remoteAddr string) bool {
 			if err != nil {
 				count++
 				if count == 5 {
-					fmt.Println(err)
 					return false
 				}
 			} else {
