@@ -1,9 +1,9 @@
 package vxbee_test
 
 import (
-	vxbee "ccl/go/nfd/virtual_xbee"
-	"ccl/go/nfd/xbee"
 	"encoding/hex"
+	vxbee "gitee.com/ccl0924/nfd/nfd/virtual_xbee"
+	"gitee.com/ccl0924/nfd/nfd/xbee"
 	"reflect"
 	"testing"
 )

@@ -1,7 +1,7 @@
 package xbee_test
 
 import (
-	"ccl/go/nfd/xbee"
+	"gitee.com/ccl0924/nfd/nfd/xbee"
 	"reflect"
 	"testing"
 )

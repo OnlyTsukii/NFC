@@ -1,8 +1,8 @@
 package main
 
 import (
-	"ccl/go/nfd"
 	"context"
+	"gitee.com/ccl0924/nfd/nfd"
 	"net"
 	"os/signal"
 	"syscall"

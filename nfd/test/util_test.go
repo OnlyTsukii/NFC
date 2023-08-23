@@ -2,8 +2,8 @@ package nfd_test
 
 import (
 	"bytes"
-	"ccl/go/nfd"
 	"encoding/hex"
+	"gitee.com/ccl0924/nfd/nfd"
 	"testing"
 )
 

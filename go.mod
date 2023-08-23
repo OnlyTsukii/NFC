@@ -1,4 +1,4 @@
-module ccl/go
+module gitee.com/ccl0924/nfd
 
 go 1.21.0
 

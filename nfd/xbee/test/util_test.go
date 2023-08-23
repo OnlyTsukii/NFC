@@ -1,8 +1,8 @@
 package xbee_test
 
 import (
-	"ccl/go/nfd/xbee"
 	"encoding/hex"
+	"gitee.com/ccl0924/nfd/nfd/xbee"
 	"reflect"
 	"testing"
 )

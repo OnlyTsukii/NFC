@@ -2,7 +2,7 @@ package nfd_test
 
 import (
 	"bytes"
-	"ccl/go/nfd"
+	"gitee.com/ccl0924/nfd/nfd"
 	"testing"
 )
 

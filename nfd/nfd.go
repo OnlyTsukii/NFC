@@ -5,7 +5,7 @@ import (
 
 	// Test for virtual device
 	// If you need to use a physical device, replace it with "ccl/go/nfd/xbee"
-	xbee "ccl/go/nfd/virtual_xbee"
+	xbee "gitee.com/ccl0924/nfd/nfd/virtual_xbee"
 
 	"context"
 	"errors"
