@@ -11,10 +11,10 @@ import (
 
 const (
 	DELIMITER               = 0x7e
-	MAX_RECV_PACKET_CH_SIZE = 100
-	MAX_RECV_RESP_CH_SIZE   = 100
-	MAX_RECV_STATUS_CH_SIZE = 100
-	MAX_RECV_BYTE_CH_SIZE   = 30000
+	MAX_RECV_PACKET_CH_SIZE = 64
+	MAX_RECV_RESP_CH_SIZE   = 64
+	MAX_RECV_STATUS_CH_SIZE = 64
+	MAX_RECV_BYTE_CH_SIZE   = 10000
 )
 
 var child_ctx, cancel = context.WithCancel(context.TODO())
@@ -138,6 +138,7 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 			}
 		case <-ctx.Done():
 			return
+		default:
 		}
 	}
 }
@@ -152,6 +153,7 @@ func (reader *Reader) ReadBytes(ctx context.Context, count int) []byte {
 			index++
 		case <-ctx.Done():
 			return nil
+		default:
 		}
 	}
 	return res
@@ -159,9 +161,12 @@ func (reader *Reader) ReadBytes(ctx context.Context, count int) []byte {
 
 func (reader *Reader) ReadByte(ctx context.Context) {
 	defer reader.wg.Done()
+	data := make([]byte, 1)
 	for {
-		data := make([]byte, 1)
-		reader.Port.Read(data)
+		_, err := reader.Port.Read(data)
+		if err != nil {
+			continue
+		}
 		select {
 		case reader.RecvByteCh <- data[0]:
 		case <-ctx.Done():

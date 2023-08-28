@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"gitee.com/ccl0924/nfd/nfd"
 	"net"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"gitee.com/ccl0924/nfd/nfd"
 
 	slog "gitee.com/czy_hit/log"
 	"github.com/google/gopacket"
@@ -24,19 +25,26 @@ var strategy = nfd.Strategy{BatchSize: BatchSize}
 var log slog.Logger
 var err error
 
+var AddrMap = map[string]string{
+	"0013a20041bb76a4": "192.168.148.130:8001",
+	"0013a20041bb7684": "192.168.148.130:8002",
+}
+
+var ListenPort = 8001
+var ListenPort2 = 8002
+
 func StartDeviceA(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.1", "", "0013a20041bb76a4", "localhost", 8001)
+	n := nfd.NewNearFieldDevice("192.168.101.1", "", "0013a20041bb76a4", AddrMap, ListenPort)
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
 }
 
 func StartDeviceB(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.2", "", "0013a20041bb7684", "localhost", 8002)
+	n := nfd.NewNearFieldDevice("192.168.101.2", "", "0013a20041bb7684", AddrMap, ListenPort2)
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
-
 }
 
 func init() {
@@ -104,7 +112,7 @@ func main() {
 	time.Sleep(5 * time.Second)
 
 	gopacket.SerializeLayers(buf, opts,
-		&layers.IPv4{DstIP: net.IPv4(192, 168, 101, 1), SrcIP: net.IPv4(192, 168, 101, 2)},
+		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 2), DstIP: net.IPv4(192, 168, 101, 1)},
 		&layers.UDP{SrcPort: 2333, DstPort: 2333},
 		gopacket.Payload(messageB))
 	bufs[0] = buf.Bytes()
@@ -115,6 +123,7 @@ func main() {
 	}
 	log.Infof("send %d message success\n", n)
 	time.Sleep(5 * time.Second)
+
 	stop()
 
 	<-ctx.Done()

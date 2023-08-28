@@ -7,18 +7,18 @@ import (
 	"strings"
 )
 
-func MacToHex(mac string) []byte {
+func MacToHex(mac string) ([]byte, error) {
 	hexParts := make([]byte, 0)
 	for len(mac) > 0 {
 		hexBytes, err := hex.DecodeString(mac[:2])
 		if err != nil {
 			logger.Warnf("Invalid decimal string")
-			return nil
+			return nil, err
 		}
 		hexParts = append(hexParts, hexBytes...)
 		mac = mac[2:]
 	}
-	return hexParts
+	return hexParts, nil
 }
 
 func HexToMac(hex []byte) string {
@@ -141,16 +141,16 @@ func CreateIPData(n *NearFieldDevice, dest string, bs []byte) []byte {
 	}
 }
 
-func GetIPData(packet []byte) ([]byte, error) {
-	version := packet[0] / 16
-	if version == 4 {
-		return packet[20:], nil
-	} else if version == 6 {
-		return packet[40:], nil
-	} else {
-		return nil, errors.New("wrong packet version")
-	}
-}
+// func GetIPData(packet []byte) ([]byte, error) {
+// 	version := packet[0] / 16
+// 	if version == 4 {
+// 		return packet[20:], nil
+// 	} else if version == 6 {
+// 		return packet[40:], nil
+// 	} else {
+// 		return nil, errors.New("wrong packet version")
+// 	}
+// }
 
 // func Ping(hostname string, msg []byte) ([]byte, error) {
 // 	ipAddr, err := net.ResolveIPAddr("ip4", hostname)

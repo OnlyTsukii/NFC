@@ -34,9 +34,15 @@ func NewPacket(seq, packetType int, srcMAC, destMAC string, data []byte) *Packet
 	}
 }
 
-func (p *Packet) Encode() []byte {
-	srcMAC := MacToHex(p.SrcMac)
-	destMAC := MacToHex(p.DestMac)
+func (p *Packet) Encode() ([]byte, error) {
+	srcMAC, err := MacToHex(p.SrcMac)
+	if err != nil {
+		return nil, err
+	}
+	destMAC, err := MacToHex(p.DestMac)
+	if err != nil {
+		return nil, err
+	}
 	data := p.Data
 
 	packetData := make([]byte, HEADSIZE+len(data))
@@ -46,7 +52,7 @@ func (p *Packet) Encode() []byte {
 	copy(packetData[DEST_MAC_OFFSET:DATA_OFFSET], destMAC)
 	copy(packetData[DATA_OFFSET:], data)
 
-	return packetData
+	return packetData, nil
 }
 
 func DecodePacket(data []byte) (*Packet, error) {

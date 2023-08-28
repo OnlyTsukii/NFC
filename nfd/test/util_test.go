@@ -2,8 +2,10 @@ package nfd_test
 
 import (
 	"bytes"
-	"encoding/hex"
+
 	"gitee.com/ccl0924/nfd/nfd"
+
+	"encoding/hex"
 	"testing"
 )
 
@@ -11,7 +13,7 @@ func TestMacToHexAndHexToMac(t *testing.T) {
 	mac := "0011223344556677"
 	expectedHex := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77}
 
-	hexData := nfd.MacToHex(mac)
+	hexData, _ := nfd.MacToHex(mac)
 	if !bytes.Equal(hexData, expectedHex) {
 		t.Errorf("MacToHex returned incorrect result")
 	}

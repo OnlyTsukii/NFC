@@ -76,10 +76,10 @@ type Xbee struct {
 	Mutex sync.Mutex
 }
 
-func NewXbee(port string, baudrate int, MACAddress string, UDPAddress string, UDPPort int) (*Xbee, error) {
+func NewXbee(port string, baudrate int, MACAddress string, AddrMap map[string]string, UDPPort int) (*Xbee, error) {
 	var err error
 	x := Xbee{Seq: -1}
-	x.VirtualDevice, err = NewXbeeDevice(MACAddress, UDPAddress, UDPPort)
+	x.VirtualDevice, err = NewXbeeDevice(MACAddress, AddrMap, UDPPort)
 	if err != nil {
 		return nil, err
 	}

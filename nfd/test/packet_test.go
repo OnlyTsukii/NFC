@@ -2,7 +2,9 @@ package nfd_test
 
 import (
 	"bytes"
+
 	"gitee.com/ccl0924/nfd/nfd"
+
 	"testing"
 )
 
@@ -14,7 +16,7 @@ func TestPacketEncodingAndDecoding(t *testing.T) {
 	data := []byte{0x01, 0x02, 0x03, 0x04}
 
 	originalPacket := nfd.NewPacket(seq, packetType, srcMAC, destMAC, data)
-	encodedData := originalPacket.Encode()
+	encodedData, _ := originalPacket.Encode()
 
 	decodedPacket, err := nfd.DecodePacket(encodedData)
 	if err != nil {
