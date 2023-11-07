@@ -11,10 +11,10 @@ import (
 
 const (
 	DELIMITER               = 0x7e
-	MAX_RECV_PACKET_CH_SIZE = 64
-	MAX_RECV_RESP_CH_SIZE   = 64
-	MAX_RECV_STATUS_CH_SIZE = 64
-	MAX_RECV_BYTE_CH_SIZE   = 10000
+	MAX_RECV_PACKET_CH_SIZE = 3
+	MAX_RECV_RESP_CH_SIZE   = 3
+	MAX_RECV_STATUS_CH_SIZE = 3
+	MAX_RECV_BYTE_CH_SIZE   = 1024
 )
 
 var child_ctx, cancel = context.WithCancel(context.TODO())
@@ -105,10 +105,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 				frame = append(frame, reader.ReadBytes(ctx, int(frame[LEN_END_OFFSET])+1)...)
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// if len(frame) == 29 {
-				// 	logger.Infof(len(frame))
-				// }
-				// print(frame)
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE {
 					select {
 					case reader.RecvRespCh <- temp:
@@ -131,9 +127,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 						reader.RecvPacketCh <- temp
 					}
 				}
-				// else if frame[FRAME_TYPE_OFFSET] == 0x8d {
-				// 	print(frame)
-				// }
 				frame = make([]byte, 0)
 			}
 		case <-ctx.Done():

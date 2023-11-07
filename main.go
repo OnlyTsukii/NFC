@@ -25,23 +25,15 @@ var strategy = nfd.Strategy{BatchSize: BatchSize}
 var log slog.Logger
 var err error
 
-var AddrMap = map[string]string{
-	"0013a20041bb76a4": "192.168.148.130:8001",
-	"0013a20041bb7684": "192.168.148.130:8002",
-}
-
-var ListenPort = 8001
-var ListenPort2 = 8002
-
 func StartDeviceA(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.1", "", "0013a20041bb76a4", AddrMap, ListenPort)
+	n := nfd.NewNearFieldDevice("192.168.101.1", "")
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
 }
 
 func StartDeviceB(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.2", "", "0013a20041bb7684", AddrMap, ListenPort2)
+	n := nfd.NewNearFieldDevice("192.168.101.2", "")
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
@@ -55,23 +47,21 @@ func init() {
 }
 
 func listenAndPrint(ctx context.Context, d *nfd.NearFieldDevice) {
-	bufs := make([][]byte, BatchSize)
 	buf := make([]byte, BufSize)
-	bufs[0] = buf
-	size := make([]int, BatchSize)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		d.Read(bufs, size, 0)
-		if size[0] > 0 {
+		size, err := d.Read(buf)
+		if err != nil {
+			log.Error(err)
+		}
+		if size > 0 {
 			log.Info(buf)
 		}
-		size[0] = 0
 	}
-
 }
 
 func main() {
@@ -94,16 +84,13 @@ func main() {
 	time.Sleep(5 * time.Second)
 	log.Info("start send test")
 
-	bufs := make([][]byte, BatchSize)
-
 	gopacket.SerializeLayers(buf, opts,
 		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 1), DstIP: net.IPv4(192, 168, 101, 2)},
 		&layers.UDP{SrcPort: 2333, DstPort: 2333},
 		gopacket.Payload(messageA))
-	bufs[0] = buf.Bytes()
-	bufs[0][0] = (4 << 4)
-	log.Info(bufs[0])
-	n, err := deviceA.Write(bufs, 0)
+	data := buf.Bytes()
+	data[0] = (4 << 4)
+	n, err := deviceA.Write(data)
 	if err != nil {
 		log.Error(err)
 	}
@@ -115,9 +102,9 @@ func main() {
 		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 2), DstIP: net.IPv4(192, 168, 101, 1)},
 		&layers.UDP{SrcPort: 2333, DstPort: 2333},
 		gopacket.Payload(messageB))
-	bufs[0] = buf.Bytes()
-	bufs[0][0] = (4 << 4)
-	n, err = deviceB.Write(bufs, 0)
+	data = buf.Bytes()
+	data[0] = (4 << 4)
+	n, err = deviceB.Write(data)
 	if err != nil {
 		log.Error(err)
 	}

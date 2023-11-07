@@ -1,11 +1,12 @@
 package nfd
 
 import (
+	"fmt"
 	"gitee.com/czy_hit/log"
 
-	// Test for virtual device
-	// If you need to use a physical device, replace it with "ccl/go/nfd/xbee"
-	xbee "gitee.com/ccl0924/nfd/nfd/virtual_xbee"
+	"go.bug.st/serial/enumerator"
+
+	"gitee.com/ccl0924/nfd/nfd/xbee"
 
 	"context"
 	"errors"
@@ -46,12 +47,12 @@ const (
 )
 
 var (
-	DEV_LIST = map[string]int{
+	DevList = map[string]int{
 		"2FE3:0100": BLUETOOTH,
 		"0403:6001": XBEE,
 	}
 
-	ADDR_LIST = map[string]string{}
+	AddrList = map[string]string{}
 
 	logger log.Logger
 )
@@ -122,19 +123,13 @@ type NearFieldDevice struct {
 	Mutex3 sync.Mutex
 	WG     sync.WaitGroup
 
-	before    int
-	ack_count int
-	context   context.Context
-	cancel    context.CancelFunc
-
-	// Test for virtual device
-	AddrMap    map[string]string
-	UDPPort    int
-	MACAddress string
+	before   int
+	ackCount int
+	context  context.Context
+	cancel   context.CancelFunc
 }
 
-// func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
-func NewNearFieldDevice(ipv4 string, ipv6 string, MACAddress string, AddrMap map[string]string, UDPPort int) *NearFieldDevice {
+func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 	if ipv4 == "" {
 		ipv4 = DEFAULT_IPv4
 	}
@@ -153,54 +148,37 @@ func NewNearFieldDevice(ipv4 string, ipv6 string, MACAddress string, AddrMap map
 		RxData:       make(chan []byte, 64),
 		Started:      make(map[string]bool),
 		before:       -1,
-
-		// Test for virtual device
-		AddrMap:    AddrMap,
-		UDPPort:    UDPPort,
-		MACAddress: MACAddress,
 	}
 }
 
-// func DevIdf(n *NearFieldDevice) bool {
-// 	portList, _ := enumerator.GetDetailedPortsList()
-// 	for _, port := range portList {
-// 		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
-// 		if devType, ok := DEV_LIST[id]; ok {
-// 			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, MIN_RSSI, nil}
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
-
-// func (n *NearFieldDevice) Open() error {
-// 	if DevIdf(n) {
-// 		switch n.DevDesc.DevType {
-// 		case XBEE:
-// 			xbee, err := xbee.NewXbee(n.DevDesc.DevPort, 115200)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			n.DevDesc.MAC = xbee.MAC
-// 			n.DevDesc.Device = xbee
-// 		case BLUETOOTH:
-// 			// Bluetooth device initialization
-// 		}
-// 	} else {
-// 		return errors.New("failed to identify the device type")
-// 	}
-// 	return nil
-// }
-
-// Test for virtual device
-// If you need to use a physical device, replace it with the code commented out above
-func (n *NearFieldDevice) Open() error {
-	xbee, err := xbee.NewXbee(n.DevDesc.DevPort, 115200, n.MACAddress, n.AddrMap, n.UDPPort)
-	if err != nil {
-		return err
+func DevIdf(n *NearFieldDevice) bool {
+	portList, _ := enumerator.GetDetailedPortsList()
+	for _, port := range portList {
+		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
+		if devType, ok := DevList[id]; ok {
+			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, nil}
+			return true
+		}
 	}
-	n.DevDesc.MAC = xbee.MAC
-	n.DevDesc.Device = xbee
+	return false
+}
+
+func (n *NearFieldDevice) Open() error {
+	if DevIdf(n) {
+		switch n.DevDesc.DevType {
+		case XBEE:
+			xbee, err := xbee.NewXbee(n.DevDesc.DevPort, 115200)
+			if err != nil {
+				return err
+			}
+			n.DevDesc.MAC = xbee.MAC
+			n.DevDesc.Device = xbee
+		case BLUETOOTH:
+			// Bluetooth device initialization
+		}
+	} else {
+		return errors.New("failed to identify the device type")
+	}
 	return nil
 }
 
@@ -260,7 +238,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
 		for key := range n.NodeStatuses {
 			if n.NodeStatuses[key] == 1 {
-				p.DestMac = ADDR_LIST[key]
+				p.DestMac = AddrList[key]
 				data, err := p.Encode()
 				if err != nil {
 					return false
@@ -276,7 +254,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		logger.Warnf("send RELAY_REQ packet failed")
 		return false
 	} else {
-		if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
+		if destMac, ok := AddrList[tx.DestIP]; ok {
 			p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
 			data, err := p.Encode()
 			if err != nil {
@@ -306,7 +284,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 				n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES - 2}
 				if n.WaitForAck(p.Seq) {
 					n.Seq = (n.Seq + 1) % 256
-					destMac = ADDR_LIST[tx.DestIP]
+					destMac = AddrList[tx.DestIP]
 					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
 					data, err := p.Encode()
 					if err != nil {
@@ -346,14 +324,14 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 				if ack.PacketType == ACK {
 					if ack.Seq != n.before {
 						logger.Infof("received a ACK for [%v]", seq)
-						n.ack_count++
-						logger.Infof("count: %d", n.ack_count)
+						n.ackCount++
+						logger.Infof("count: %d", n.ackCount)
 						n.before = ack.Seq
 					}
 				} else if ack.PacketType == ADDR_RESP {
 					srcIP, _, err := GetIP(ack.Data)
 					if err == nil {
-						ADDR_LIST[srcIP] = ack.SrcMac
+						AddrList[srcIP] = ack.SrcMac
 					}
 					logger.Infof("received a ADDR_RESP for [%d]", seq)
 				} else if ack.PacketType == STATUS_RESP {
@@ -432,7 +410,7 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 		case p := <-n.DataQueue:
 			SrcIP, DestIP, err := GetIP(p.Data)
 			if err == nil {
-				ADDR_LIST[SrcIP] = p.SrcMac
+				AddrList[SrcIP] = p.SrcMac
 				if p.PacketType == ADDR_REQ {
 					if n.IPv4 == DestIP || n.IPv6 == DestIP {
 						p := NewPacket(p.Seq, ADDR_RESP, n.DevDesc.MAC, p.SrcMac, CreateIPData(n, SrcIP, nil))
@@ -561,16 +539,16 @@ func (n *NearFieldDevice) UpdateStatus() {
 		n.Mutex.Lock()
 		SrcIP, _, err := GetIP(resp.Data)
 		if err == nil {
-			ADDR_LIST[SrcIP] = resp.SrcMac
+			AddrList[SrcIP] = resp.SrcMac
 		}
 		n.NodeStatuses[SrcIP] = int(resp.Data[len(resp.Data)-1])
 		n.Mutex.Unlock()
 		keys[SrcIP] = 1
 	default:
 		n.Mutex.Lock()
-		for key := range ADDR_LIST {
+		for key := range AddrList {
 			if _, ok := keys[key]; !ok {
-				delete(ADDR_LIST, key)
+				delete(AddrList, key)
 			}
 		}
 		for key := range n.NodeStatuses {
@@ -679,7 +657,7 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	tx_type := P2P
 	if destIP == BCST_IP {
 		tx_type = BCST
-	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeStatuses) > 0 && !ok {
+	} else if _, ok := AddrList[destIP]; len(n.NodeStatuses) > 0 && !ok {
 		// If the ADDR_LIST contains all nodes in the current network,
 		// but the destination IP address of the packet is not in it,
 		// the packet is considered to be of the RELAY_REQ type,
