@@ -699,7 +699,7 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	tx_type := P2P
 	if destIP == BCST_IP {
 		tx_type = BCST
-	} else if _, ok := AddrList[destIP]; len(n.NodeStatuses) > 0 && !ok {
+	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeStatuses) > 0 && !ok {
 		// If the ADDR_LIST contains all nodes in the current network,
 		// but the destination IP address of the packet is not in it,
 		// the packet is considered to be of the RELAY_REQ type,
