@@ -55,6 +55,9 @@ func (s *Writer) GenATCmd(cmd string) *ATCmdFrame {
 		FrameType: 0x09,
 	}
 	s.Seq = (s.Seq + 1) % 256
+	if s.Seq == 0 {
+		s.Seq = 1
+	}
 	CMD.FrameSeq = byte(s.Seq)
 	for _, v := range cmd {
 		CMD.Data = append(CMD.Data, byte(v))
@@ -66,6 +69,9 @@ func (s *Writer) GenATCmd(cmd string) *ATCmdFrame {
 func (s *Writer) GenTransmitRequest(x64addr []byte, data []byte) *TransmitRequestFrame {
 	end := 1 + 1 + 8 + 2 + 1 + 1 + len(data)
 	s.Seq = (s.Seq + 1) % 256
+	if s.Seq == 0 {
+		s.Seq = 1
+	}
 	CMD := TransmitRequestFrame{
 		Delimiter: 0x7e,
 		LenStart:  0x00,

@@ -3,9 +3,17 @@ package nfd
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
+
+func print(bs []byte) {
+	for _, v := range bs {
+		fmt.Printf("%02x", v)
+	}
+	fmt.Println()
+}
 
 func MacToHex(mac string) ([]byte, error) {
 	hexParts := make([]byte, 0)
