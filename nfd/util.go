@@ -4,11 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
 
-func print(bs []byte) {
+func myPrint(bs []byte) {
 	for _, v := range bs {
 		fmt.Printf("%02x", v)
 	}
@@ -41,77 +42,35 @@ func HexToMac(hex []byte) string {
 	return strings.Join(ipParts, "")
 }
 
-func IPv4ToHex(ip string) []byte {
-	parts := strings.Split(ip, ".")
-	hexParts := make([]byte, 0)
-	for _, part := range parts {
-		decimal, err := strconv.ParseInt(part, 10, 16)
-		if err != nil {
-			logger.Warnf("Invalid decimal string")
-			return nil
-		}
-		hexParts = append(hexParts, byte(decimal))
+func IPv4ToHex(ipv4Str string) []byte {
+	ip := net.ParseIP(ipv4Str)
+	if ip == nil {
+		return nil
 	}
-	return hexParts
+	return ip.To4()
 }
 
-func HexToIPv4(hex []byte) string {
-	var ipParts []string
-	for i := range hex {
-		ipParts = append(ipParts, strconv.Itoa(int(hex[i])))
+func HexToIPv4(ipv4Bytes []byte) string {
+	if len(ipv4Bytes) != net.IPv4len {
+		return ""
 	}
-	return strings.Join(ipParts, ".")
+	return fmt.Sprintf("%d.%d.%d.%d", ipv4Bytes[0], ipv4Bytes[1], ipv4Bytes[2], ipv4Bytes[3])
 }
 
-func IPv6ToHex(ip string) []byte {
-	parts := strings.Split(ip, ":")
-	hexParts := make([]byte, 0)
-	for _, part := range parts {
-		if len(part) == 0 {
-			part = "0000"
-		} else if len(part) == 1 {
-			part = "0" + part + "00"
-		} else if len(part) == 2 {
-			part = "00" + part
-		} else if len(part) == 3 {
-			part = "0" + part[:1] + part[1:]
-		}
-		hexBytes, err := hex.DecodeString(part[:2])
-		if err != nil {
-			logger.Warnf("Invalid decimal string")
-			return nil
-		}
-		hexParts = append(hexParts, hexBytes...)
-		hexBytes, err = hex.DecodeString(part[2:])
-		if err != nil {
-			logger.Warnf("Invalid decimal string")
-			return nil
-		}
-		hexParts = append(hexParts, hexBytes...)
+func IPv6ToHex(ipv6Str string) []byte {
+	ip := net.ParseIP(ipv6Str)
+	if ip == nil {
+		return nil
 	}
-	return hexParts
+	return ip.To16()
 }
 
-func HexToIPv6(hex []byte) string {
-	var ipParts []string
-	for len(hex) > 0 {
-		str1 := strconv.FormatInt(int64(hex[0]), 16)
-		str2 := strconv.FormatInt(int64(hex[1]), 16)
-		if str1 == "0" {
-			if str2 == "0" {
-				ipParts = append(ipParts, "")
-			} else {
-				ipParts = append(ipParts, str2)
-			}
-		} else {
-			if len(str2) == 1 {
-				str2 = "0" + str2
-			}
-			ipParts = append(ipParts, str1+str2)
-		}
-		hex = hex[2:]
+func HexToIPv6(ipv6Bytes []byte) string {
+	ip := net.IP(ipv6Bytes)
+	if ip.To4() != nil {
+		return ""
 	}
-	return strings.Join(ipParts, ":")
+	return ip.String()
 }
 
 func GetIP(packet []byte) (string, string, error) {

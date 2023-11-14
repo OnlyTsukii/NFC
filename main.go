@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"net"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"gitee.com/ccl0924/nfd/nfd"
@@ -55,9 +53,7 @@ func init() {
 }
 
 func listenAndPrint(ctx context.Context, d *nfd.NearFieldDevice) {
-	bufs := make([][]byte, BatchSize)
 	buf := make([]byte, BufSize)
-	bufs[0] = buf
 	size := make([]int, BatchSize)
 	for {
 		select {
@@ -65,7 +61,7 @@ func listenAndPrint(ctx context.Context, d *nfd.NearFieldDevice) {
 			return
 		default:
 		}
-		d.Read(bufs, size, 0)
+		d.Read(buf)
 		if size[0] > 0 {
 			log.Info("read a packet from buffer: len ", size[0])
 			// Decode a packet
@@ -119,26 +115,27 @@ func DeviceInfoHandler(ctx context.Context, d *nfd.NearFieldDevice) {
 }
 
 func main() {
-	defer log.Sync()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	deviceA := StartDeviceA(ctx)
-
-	go listenAndPrint(ctx, deviceA)
-
-	go DeviceInfoHandler(ctx, deviceA)
-
-	time.Sleep(10 * time.Second)
+	//defer log.Sync()
+	//
+	//ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	//defer stop()
+	//
+	//deviceA := StartDeviceA(ctx)
+	//
+	//go listenAndPrint(ctx, deviceA)
+	//
+	//go DeviceInfoHandler(ctx, deviceA)
+	//
+	//time.Sleep(10 * time.Second)
 
 	//configCh <- nfd.ConfigInfo{Type: nfd.SERACH_NODES_REQ, Status: 0, SrcMac: ""}
 
 	//time.Sleep(30 * time.Second)
 
-	stop()
-
-	<-ctx.Done()
+	//stop()
+	//
+	//<-ctx.Done()
 
 	// deviceA := StartDeviceA(ctx)
 	// // messageA := []byte("message from A")
@@ -187,10 +184,9 @@ func SendIP(n *nfd.NearFieldDevice, srcIP []byte, dstIP []byte, msg []byte) erro
 			DstIP: net.IPv4(dstIP[0], dstIP[1], dstIP[2], dstIP[3]),
 		},
 		gopacket.Payload(msg))
-	bufs := make([][]byte, 1)
-	bufs[0] = buf.Bytes()
-	bufs[0][0] = (4 << 4)
-	_, err := n.Write(bufs, 0)
+	data := buf.Bytes()
+	data[0] = (4 << 4)
+	_, err := n.Write(data)
 	if err != nil {
 		return err
 	}
