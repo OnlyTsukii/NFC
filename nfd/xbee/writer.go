@@ -9,7 +9,8 @@ import (
 const (
 	MAX_FRAME_DATA_LEN     = 241
 	BCST_X16_ADDR          = "FFFE"
-	GET_NODES_INIT_TIMEOUT = 20
+	GET_NODES_INIT_TIMEOUT = 30
+	GET_NODES_TIMEOUT      = 10
 )
 
 type Writer struct {
@@ -99,7 +100,7 @@ func (s *Writer) GetNodes(r *Reader) ([][]byte, error) {
 		if err != nil {
 			return resp, nil
 		} else {
-			timeout = RESPONSE_TIMEOUT
+			timeout = GET_NODES_TIMEOUT
 			if isATCmdValid(frame, AT) {
 				resp = append(resp, frame[AT_RESP_RESPONSE_OFFSET+2:AT_RESP_RESPONSE_OFFSET+10])
 			} else {

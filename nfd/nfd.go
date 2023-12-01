@@ -568,9 +568,11 @@ func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 		default:
 			// logger.Infof("Start discovering nodes...")
 			addrs, err := n.DevDesc.Device.GetNodes()
-			logger.Infof("Found %d nodes: %v", len(addrs), addrs)
 			if err == nil {
-				n.NodeAddrs = addrs
+				if len(addrs) != 0 {
+					logger.Infof("found %d nodes: %v", len(addrs), addrs)
+					n.NodeAddrs = addrs
+				}
 			} else {
 				logger.Warnf("get nodes error: %v", err)
 			}
