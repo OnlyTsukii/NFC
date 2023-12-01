@@ -30,10 +30,10 @@ const (
 	RELAY_REQ     = 7
 	STATUS_UPDATE = 8
 
-	XBEE      = 0
+	UNKNOWN   = 0
 	BLUETOOTH = 1
 	WIFI      = 2
-	UNKNOWN   = 3
+	XBEE      = 3
 
 	STATUS_QUERY_REQ     = 0
 	STATUS_QUERY_RESP    = 1
@@ -52,9 +52,9 @@ const (
 
 var (
 	DEV_LIST = map[string]int{
-		"2FE3:0100": BLUETOOTH,
-		"0403:6001": XBEE,
-		"1A86:7523": WIFI,
+		"2FE3:0100":          BLUETOOTH,
+		"0403:6001:A50285BI": XBEE,
+		"1A86:7523":          WIFI,
 	}
 
 	ADDR_LIST = map[string]string{}
@@ -173,7 +173,7 @@ func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 func DevIdf(n *NearFieldDevice) bool {
 	portList, _ := enumerator.GetDetailedPortsList()
 	for _, port := range portList {
-		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
+		id := fmt.Sprintf("%s:%s:%s", port.VID, port.PID, port.SerialNumber)
 		if devType, ok := DEV_LIST[id]; ok {
 			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, nil}
 			return true
@@ -186,25 +186,27 @@ func (n *NearFieldDevice) Open() error {
 	if DevIdf(n) {
 		switch n.DevDesc.DevType {
 		case XBEE:
-			xbee, err := xbee.NewXbee(n.DevDesc.DevPort, 230400)
+			xb, err := xbee.NewXbee(n.DevDesc.DevPort, 230400)
 			// xbee, err := xbee.NewXbee("COM7", 230400)
+
 			if err != nil {
 				return err
 			}
-			n.DevDesc.MAC = xbee.MAC
-			n.DevDesc.Device = xbee
+			n.DevDesc.MAC = xb.MAC
+			n.DevDesc.Device = xb
 			BCST_MAC = "000000000000FFFF"
 			DEFAULT_MAC = "FFFFFFFFFFFFFFFF"
 		case BLUETOOTH:
 			// Bluetooth device initialization
 		case WIFI:
-			wifi, err := wifi.NewWifi(n.DevDesc.DevPort, 921600)
+			wf, err := wifi.NewWifi(n.DevDesc.DevPort, 921600)
+
 			// wifi, err := wifi.NewWifi("COM3", 921600)
 			if err != nil {
 				return err
 			}
-			n.DevDesc.MAC = wifi.MAC
-			n.DevDesc.Device = wifi
+			n.DevDesc.MAC = wf.MAC
+			n.DevDesc.Device = wf
 			BCST_MAC = "1111111111"
 			DEFAULT_MAC = "1111111111"
 		}

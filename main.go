@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 
@@ -115,6 +116,8 @@ func DeviceInfoHandler(ctx context.Context, d *nfd.NearFieldDevice) {
 }
 
 func main() {
+
+	fmt.Println(666)
 
 	//defer log.Sync()
 	//
