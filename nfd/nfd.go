@@ -561,7 +561,7 @@ func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 		default:
 			// logger.Infof("Start discovering nodes...")
 			addrs, err := n.DevDesc.Device.GetNodes()
-			// logger.Infof("Found %d nodes: %v", len(addrs), addrs)
+			logger.Infof("Found %d nodes: %v", len(addrs), addrs)
 			if err == nil {
 				n.NodeAddrs = addrs
 			}
@@ -665,12 +665,12 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 	}
 	n.context, n.cancel = context.WithCancel(ctx)
 	n.DevDesc.Device.Start(n.context)
-	n.WG.Add(4)
+	n.WG.Add(5)
 	go n.Receiver(n.context)
 	go n.PacketHandler(n.context, devInfo)
 	go n.Timer(n.context)
 	go n.ConfigHandler(n.context, configInfo, devInfo)
-	// go n.NodeDetector(n.context)
+	go n.NodeDetector(n.context)
 	return nil
 }
 
@@ -702,10 +702,10 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	if destIP == BCST_IP {
 		tx_type = BCST
 	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeStatuses) > 0 && !ok {
-		//If the ADDR_LIST contains all nodes in the current network,
-		//but the destination IP address of the packet is not in it,
-		//the packet is considered to be of the RELAY_REQ type,
-		//which needs to be relayed to server by other nodes
+		// If the ADDR_LIST contains all nodes in the current network,
+		// but the destination IP address of the packet is not in it,
+		// the packet is considered to be of the RELAY_REQ type,
+		// which needs to be relayed to server by other nodes.
 		tx_type = RELAY_REQ
 	}
 	tx := TxData{data, destIP, "", tx_type}
