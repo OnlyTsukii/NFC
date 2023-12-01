@@ -1,6 +1,6 @@
 module gitee.com/ccl0924/nfd
 
-go 1.21.4
+go 1.21.0
 
 require (
 	gitee.com/czy_hit/log v0.0.0-20230814133615-951c82229acb
