@@ -239,6 +239,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		p := NewPacket(n.Seq, BCST, srcMac, BCST_MAC, tx.Data)
 		data, err := p.Encode()
 		if err != nil {
+			logger.Debugf("encode packet error: %v", err)
 			return false
 		}
 		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -252,6 +253,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		p := NewPacket(n.Seq, STATUS_REQ, srcMac, tx.DestMac, tx.Data)
 		data, err := p.Encode()
 		if err != nil {
+			logger.Debugf("encode packet error: %v", err)
 			return false
 		}
 		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -271,6 +273,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		p := NewPacket(n.Seq, STATUS_RESP, n.DevDesc.MAC, tx.DestMac, tx.Data)
 		data, err := p.Encode()
 		if err != nil {
+			logger.Debugf("encode packet error: %v", err)
 			return false
 		}
 		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -287,6 +290,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 				p.DestMac = ADDR_LIST[key]
 				data, err := p.Encode()
 				if err != nil {
+					logger.Debugf("encode packet error: %v", err)
 					return false
 				}
 				if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -302,6 +306,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 			p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
 			data, err := p.Encode()
 			if err != nil {
+				logger.Debugf("encode packet error: %v", err)
 				return false
 			}
 			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -321,6 +326,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 			p := NewPacket(n.Seq, ADDR_REQ, srcMac, BCST_MAC, CreateIPData(n, tx.DestIP, nil))
 			data, err := p.Encode()
 			if err != nil {
+				logger.Debugf("encode packet error: %v", err)
 				return false
 			}
 			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -332,6 +338,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
 					data, err := p.Encode()
 					if err != nil {
+						logger.Debugf("encode packet error: %v", err)
 						return false
 					}
 					if n.DevDesc.Device.SendPacket(data, p.DestMac) {
@@ -367,9 +374,9 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 			if ack.Seq == seq {
 				if ack.PacketType == ACK {
 					if ack.Seq != n.before {
-						logger.Infof("received a ACK for [%v]", seq)
+						logger.Debugf("received a ACK for [%v]", seq)
 						n.ack_count++
-						logger.Infof("count: %d", n.ack_count)
+						logger.Debugf("count: %d", n.ack_count)
 						n.before = ack.Seq
 					}
 				} else if ack.PacketType == ADDR_RESP {
@@ -377,9 +384,9 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 					if err == nil {
 						ADDR_LIST[srcIP] = ack.SrcMac
 					}
-					logger.Infof("received a ADDR_RESP for [%d]", seq)
+					logger.Debugf("received a ADDR_RESP for [%d]", seq)
 				} else if ack.PacketType == STATUS_RESP {
-					logger.Infof("received a STATUS_RESP for [%d]", seq)
+					logger.Debugf("received a STATUS_RESP for [%d]", seq)
 				}
 				n.TimerPacket.Timeout = 2147483647
 				return true
@@ -394,7 +401,7 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 					}
 				}
 				if count == RTT {
-					logger.Warnf("stop waiting for ack")
+					logger.Debugf("stop waiting for ack")
 					return false
 				}
 			}
@@ -526,10 +533,10 @@ func (n *NearFieldDevice) Timer(ctx context.Context) {
 					data, err := p.Encode()
 					if err == nil {
 						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-							logger.Infof("send RT %v", p.String())
+							logger.Debugf("send RT %v", p.String())
 							n.TimerPacket.Timeout = RTT
 						} else {
-							logger.Warnf("send RT packet failed")
+							logger.Debugf("send RT packet failed")
 						}
 					}
 					n.TimerPacket.Retries--
@@ -564,6 +571,8 @@ func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 			logger.Infof("Found %d nodes: %v", len(addrs), addrs)
 			if err == nil {
 				n.NodeAddrs = addrs
+			} else {
+				logger.Warnf("get nodes error: %v", err)
 			}
 		}
 	}

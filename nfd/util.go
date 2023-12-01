@@ -67,9 +67,6 @@ func IPv6ToHex(ipv6Str string) []byte {
 
 func HexToIPv6(ipv6Bytes []byte) string {
 	ip := net.IP(ipv6Bytes)
-	if ip.To4() != nil {
-		return ""
-	}
 	return ip.String()
 }
 
@@ -78,7 +75,8 @@ func GetIP(packet []byte) (string, string, error) {
 	if version == 4 {
 		return HexToIPv4(packet[12:16]), HexToIPv4(packet[16:20]), nil
 	} else if version == 6 {
-		return HexToIPv6(packet[8:24]), HexToIPv6(packet[24:40]), nil
+		//return HexToIPv6(packet[8:24]), HexToIPv6(packet[24:40]), nil
+		return "", "", errors.New("ipv6 is not supported")
 	} else {
 		return "", "", errors.New("wrong packet version")
 	}

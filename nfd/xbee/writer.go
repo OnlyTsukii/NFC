@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	MAX_FRAME_DATA_LEN = 241
-	BCST_X16_ADDR      = "FFFE"
+	MAX_FRAME_DATA_LEN     = 241
+	BCST_X16_ADDR          = "FFFE"
+	GET_NODES_INIT_TIMEOUT = 20
 )
 
 type Writer struct {
@@ -92,7 +93,7 @@ func (s *Writer) GetNodes(r *Reader) ([][]byte, error) {
 	resp := make([][]byte, 0)
 	AT := s.GenATCmd("ND")
 	s.Port.Write(ATCmdFrameToBytes(AT))
-	timeout := 13
+	timeout := GET_NODES_INIT_TIMEOUT
 	for {
 		frame, err := r.GetResp(timeout, AT.FrameSeq)
 		if err != nil {
