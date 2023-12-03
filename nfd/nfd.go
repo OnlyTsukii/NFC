@@ -370,14 +370,20 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 				} else {
 					destMac = ADDR_LIST[tx.DestIP]
 					p := NewPacket(n.Seq, RELAY_REQ, srcMac, destMac, tx.Data)
-					data, err := p.Encode()
-					if err != nil {
-						logger.Debugf("encode packet error: %v", err)
-						return false
-					}
-					if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-						logger.Infof("send RELAY_REQ %v", p.String())
-						return true
+					if len(n.NodeAddrs) > 0 {
+						p.DestMac = n.NodeAddrs[0]
+						data, err := p.Encode()
+						if err != nil {
+							logger.Debugf("encode packet error: %v", err)
+							return false
+						}
+						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+							logger.Infof("send RELAY_REQ %v", p.String())
+							return true
+						} else {
+							logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
+							return false
+						}
 					} else {
 						logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
 						return false
