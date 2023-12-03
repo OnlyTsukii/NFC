@@ -41,7 +41,7 @@ const (
 	SERACH_NODES_RESP    = 3
 	STATUS_UPDATE_NOTIFY = 4
 
-	RTT         = 10
+	RTT         = 5
 	MAX_RETRIES = 3
 
 	BCST_IP = "255.255.255.255"
@@ -344,7 +344,7 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 			}
 			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
 				logger.Infof("send ADDR_REQ %v", p.String())
-				n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES - 2}
+				n.TimerPacket = TimerData{*p, RTT, 0}
 				if n.WaitForAck(p.Seq) {
 					n.Seq = (n.Seq + 1) % 256
 					destMac = ADDR_LIST[tx.DestIP]
@@ -368,8 +368,20 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 						return false
 					}
 				} else {
-					logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
-					return false
+					destMac = ADDR_LIST[tx.DestIP]
+					p := NewPacket(n.Seq, RELAY_REQ, srcMac, destMac, tx.Data)
+					data, err := p.Encode()
+					if err != nil {
+						logger.Debugf("encode packet error: %v", err)
+						return false
+					}
+					if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+						logger.Infof("send RELAY_REQ %v", p.String())
+						return true
+					} else {
+						logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
+						return false
+					}
 				}
 			} else {
 				logger.Warnf("send ADDR_REQ packet failed")
@@ -727,13 +739,14 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	tx_type := P2P
 	if destIP == BCST_IP {
 		tx_type = BCST
-	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeAddrs) > 0 && !ok {
-		// If the ADDR_LIST contains all nodes in the current network,
-		// but the destination IP address of the packet is not in it,
-		// the packet is considered to be of the RELAY_REQ type,
-		// which needs to be relayed to server by other nodes.
-		tx_type = RELAY_REQ
 	}
+	//else if len(n.NodeAddrs) > 0 && len(ADDR_LIST) > 0 {
+	// If the ADDR_LIST contains all nodes in the current network,
+	// but the destination IP address of the packet is not in it,
+	// the packet is considered to be of the RELAY_REQ type,
+	// which needs to be relayed to server by other nodes.
+	//tx_type = RELAY_REQ
+	//}
 	tx := TxData{data, destIP, "", tx_type}
 	if !n.Send(tx) {
 		return 0, errors.New("send packet failed")
