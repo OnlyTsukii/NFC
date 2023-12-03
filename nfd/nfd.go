@@ -129,6 +129,7 @@ type NearFieldDevice struct {
 	Mutex  sync.Mutex
 	Mutex2 sync.Mutex
 	Mutex3 sync.Mutex
+	Mutex4 sync.Mutex
 	WG     sync.WaitGroup
 
 	before    int
@@ -285,20 +286,32 @@ func (n *NearFieldDevice) Send(tx TxData) bool {
 		}
 	} else if tx.TxType == RELAY_REQ {
 		p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
-		for key := range n.NodeStatuses {
-			if n.NodeStatuses[key] == 1 {
-				p.DestMac = ADDR_LIST[key]
-				data, err := p.Encode()
-				if err != nil {
-					logger.Debugf("encode packet error: %v", err)
-					return false
-				}
-				if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-					logger.Infof("send RELAY_REQ %v", p.String())
-					return true
-				}
+		if len(n.NodeAddrs) > 0 {
+			p.DestMac = n.NodeAddrs[0]
+			data, err := p.Encode()
+			if err != nil {
+				logger.Debugf("encode packet error: %v", err)
+				return false
+			}
+			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+				logger.Infof("send RELAY_REQ %v", p.String())
+				return true
 			}
 		}
+		//for key := range n.NodeStatuses {
+		//	if n.NodeStatuses[key] == 1 {
+		//		p.DestMac = ADDR_LIST[key]
+		//		data, err := p.Encode()
+		//		if err != nil {
+		//			logger.Debugf("encode packet error: %v", err)
+		//			return false
+		//		}
+		//		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+		//			logger.Infof("send RELAY_REQ %v", p.String())
+		//			return true
+		//		}
+		//	}
+		//}
 		logger.Warnf("send RELAY_REQ packet failed")
 		return false
 	} else {
@@ -569,10 +582,12 @@ func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 			// logger.Infof("Start discovering nodes...")
 			addrs, err := n.DevDesc.Device.GetNodes()
 			if err == nil {
+				n.Mutex4.Lock()
 				if len(addrs) != 0 {
 					logger.Infof("found %d nodes: %v", len(addrs), addrs)
 					n.NodeAddrs = addrs
 				}
+				n.Mutex4.Unlock()
 			} else {
 				logger.Warnf("get nodes error: %v", err)
 			}
@@ -680,7 +695,7 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 	go n.Receiver(n.context)
 	go n.PacketHandler(n.context, devInfo)
 	go n.Timer(n.context)
-	go n.ConfigHandler(n.context, configInfo, devInfo)
+	//go n.ConfigHandler(n.context, configInfo, devInfo)
 	go n.NodeDetector(n.context)
 	return nil
 }
@@ -712,7 +727,7 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	tx_type := P2P
 	if destIP == BCST_IP {
 		tx_type = BCST
-	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeStatuses) > 0 && !ok {
+	} else if _, ok := ADDR_LIST[destIP]; len(n.NodeAddrs) > 0 && !ok {
 		// If the ADDR_LIST contains all nodes in the current network,
 		// but the destination IP address of the packet is not in it,
 		// the packet is considered to be of the RELAY_REQ type,
