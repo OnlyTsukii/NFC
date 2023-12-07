@@ -3,6 +3,7 @@ package xbee
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -103,12 +104,12 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 				frame = append(frame, b)
 				frame = append(frame, reader.ReadBytes(ctx, 2)...)
 				frame = append(frame, reader.ReadBytes(ctx, int(frame[LEN_END_OFFSET])+1)...)
+				if len(frame) <= FRAME_TYPE_OFFSET {
+					continue
+				}
+				fmt.Println(len(frame))
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
-				// if len(frame) == 29 {
-				// 	logger.Infof(len(frame))
-				// }
-				// print(frame)
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE {
 					select {
 					case reader.RecvRespCh <- temp:
@@ -131,9 +132,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 						reader.RecvPacketCh <- temp
 					}
 				}
-				// else if frame[FRAME_TYPE_OFFSET] == 0x8d {
-				// 	print(frame)
-				// }
 				frame = make([]byte, 0)
 			}
 		case <-ctx.Done():
