@@ -385,7 +385,6 @@ func (n *NearFieldDevice) Receiver(ctx context.Context) {
 		default:
 			data, err := n.DevDesc.Device.ReceivePacket()
 			if err != nil {
-				logger.Errorf("Error receiving packet: %v", err)
 				continue
 			}
 
