@@ -52,9 +52,9 @@ var (
 	logger log.Logger
 
 	DEV_LIST = map[string]int{
-		"2FE3:0100": BLUETOOTH,
-		//"0403:6001:A50285BI": XBEE,
-		"0403:6001": XBEE,
+		"2FE3:0100":          BLUETOOTH,
+		"0403:6001:A50285BI": XBEE,
+		//"0403:6001": XBEE,
 		"1A86:7523": WIFI,
 	}
 
@@ -172,8 +172,8 @@ func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 func DevIdf(n *NearFieldDevice) bool {
 	portList, _ := enumerator.GetDetailedPortsList()
 	for _, port := range portList {
-		//id := fmt.Sprintf("%s:%s:%s", port.VID, port.PID, port.SerialNumber)
-		id := fmt.Sprintf("%s:%s", port.VID, port.PID)
+		id := fmt.Sprintf("%s:%s:%s", port.VID, port.PID, port.SerialNumber)
+		//id := fmt.Sprintf("%s:%s", port.VID, port.PID)
 		if devType, ok := DEV_LIST[id]; ok {
 			n.DevDesc = DevDesc{devType, port.Name, P2P_MAC, nil}
 			return true
@@ -186,8 +186,8 @@ func (n *NearFieldDevice) Open() error {
 	if DevIdf(n) {
 		switch n.DevDesc.DevType {
 		case XBEE:
-			//xb, err := xbee.NewXbee(n.DevDesc.DevPort, 230400)
-			xb, err := xbee.NewXbee("COM5", 230400)
+			xb, err := xbee.NewXbee(n.DevDesc.DevPort, 230400)
+			//xb, err := xbee.NewXbee("COM7", 230400)
 
 			if err != nil {
 				return err
@@ -626,10 +626,10 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 	}
 	n.context, n.cancel = context.WithCancel(ctx)
 	n.DevDesc.Device.Start(n.context)
-	n.WG.Add(2)
+	n.WG.Add(3)
 	go n.Receiver(n.context)
 	go n.PacketHandler(n.context, devInfo)
-	//go n.NodeDetector(n.context)
+	go n.NodeDetector(n.context)
 	//go n.ConfigHandler(n.context, configInfo, devInfo)
 	return nil
 }

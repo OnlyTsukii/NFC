@@ -26,7 +26,7 @@ var err error
 var selfIP = []byte{192, 168, 101, 2}
 
 func StartDevice(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.2", "")
+	n := nfd.NewNearFieldDevice("192.168.101.1", "")
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
@@ -120,7 +120,7 @@ func main() {
 	opts := gopacket.SerializeOptions{}
 
 	gopacket.SerializeLayers(buf, opts,
-		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 2), DstIP: net.IPv4(192, 168, 101, 1)},
+		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 1), DstIP: net.IPv4(192, 168, 101, 2)},
 		&layers.UDP{SrcPort: 2333, DstPort: 2333},
 		gopacket.Payload(message))
 
