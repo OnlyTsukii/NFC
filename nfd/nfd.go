@@ -448,8 +448,15 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 					n.RxData <- p.Data
 
 					if p.PacketType == P2P || p.PacketType == RELAY_REQ {
-						ack := TxData{CreateIPData(n, SrcIP, nil), SrcIP, p.SrcMac, ACK}
-						n.Send(ack, p.Seq)
+						p := NewPacket(p.Seq, ACK, n.DevDesc.MAC, p.SrcMac, CreateIPData(n, SrcIP, nil))
+						data, err := p.Encode()
+						if err != nil {
+							logger.Debugf("encode packet error: %v", err)
+							continue
+						}
+						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+							logger.Infof("send ACK %v", p.String())
+						}
 					} else {
 						logger.Infof("received a BCST %v", p.String())
 					}

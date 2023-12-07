@@ -3,7 +3,6 @@ package xbee
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -107,7 +106,6 @@ func (reader *Reader) ReadFrame(ctx context.Context) {
 				if len(frame) <= FRAME_TYPE_OFFSET {
 					continue
 				}
-				fmt.Println(len(frame))
 				temp := make([]byte, len(frame))
 				copy(temp, frame)
 				if frame[FRAME_TYPE_OFFSET] == AT_COMMAND_RESPONSE {

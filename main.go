@@ -26,7 +26,7 @@ var err error
 var selfIP = []byte{192, 168, 101, 2}
 
 func StartDevice(ctx context.Context) *nfd.NearFieldDevice {
-	n := nfd.NewNearFieldDevice("192.168.101.1", "")
+	n := nfd.NewNearFieldDevice("192.168.101.2", "")
 	n.Init(strategy)
 	n.Run(ctx, configCh, deviceCh)
 	return n
@@ -120,7 +120,7 @@ func main() {
 	opts := gopacket.SerializeOptions{}
 
 	gopacket.SerializeLayers(buf, opts,
-		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 1), DstIP: net.IPv4(192, 168, 101, 2)},
+		&layers.IPv4{SrcIP: net.IPv4(192, 168, 101, 2), DstIP: net.IPv4(192, 168, 101, 1)},
 		&layers.UDP{SrcPort: 2333, DstPort: 2333},
 		gopacket.Payload(message))
 
@@ -224,3 +224,28 @@ var test_data = []byte{
 	0x37, 0x36, 0x41, 0x34, 0x44, 0x37, 0x38, 0x22, 0x20, 0x2F, 0x3E, 0x3C, 0x2F, 0x41, 0x53, 0x55,
 	0x53, 0x5F, 0x3C, 0x41, 0x53, 0x55, 0x53, 0x5F, 0x41, 0x52, 0x4D, 0x4F, 0x55, 0x52, 0x59, 0x5F,
 	0x45, 0x00, 0x1F, 0x5C, 0x12, 0xc2, 0x00, 0x00, 0x01, 0x11, 0x00, 0x00, 0xC0, 0xA8, 0x00, 0x01}
+
+//func (n *NearFieldDevice) Read(buf []byte) (size int, err error) {
+//	data := <-n.RxData
+//	size = copy(buf, data)
+//	return size, err
+//}
+//
+//func (n *NearFieldDevice) Write(buf []byte) (int, error) {
+//	data := make([]byte, len(buf))
+//	size := copy(data, buf)
+//	_, destIP, err := GetIP(data)
+//	if err != nil {
+//		return 0, err
+//	}
+//	txType := P2P
+//	if destIP == BCST_IPv4 {
+//		txType = BCST
+//	}
+//	tx := TxData{data, destIP, "", txType}
+//	if !n.Send(tx, -1) {
+//		return 0, errors.New("send packet failed")
+//	}
+//
+//	return size, nil
+//}
