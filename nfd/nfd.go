@@ -41,16 +41,16 @@ const (
 	SERACH_NODES_RESP    = 3
 	STATUS_UPDATE_NOTIFY = 4
 
-	RTT         = 5
-	MAX_RETRIES = 3
+	TIMEOUT = 5
 
-	BCST_IP = "255.255.255.255"
-
-	DEFAULT_IPv4 = "192.168.0.1"
-	DEFAULT_IPv6 = "1111:2222:3333:4444:5555:6666:7777:8888"
+	BCST_IPv4    = "255.255.255.255"
+	DEFAULT_IPv4 = "192.168.101.128"
+	DEFAULT_IPv6 = "fe80::1"
 )
 
 var (
+	logger log.Logger
+
 	DEV_LIST = map[string]int{
 		"2FE3:0100":          BLUETOOTH,
 		"0403:6001:A50285BI": XBEE,
@@ -59,10 +59,12 @@ var (
 
 	ADDR_LIST = map[string]string{}
 
-	logger log.Logger
+	RTT_MAP = map[string]time.Duration{}
 
-	BCST_MAC    = ""
-	DEFAULT_MAC = ""
+	RELAY_TABLE = []string{}
+
+	BCST_MAC = ""
+	P2P_MAC  = ""
 )
 
 type Strategy struct {
@@ -87,12 +89,6 @@ type Device interface {
 	GetNodes() ([]string, error)
 	Start(ctx context.Context)
 	Stop()
-}
-
-type TimerData struct {
-	Packet  Packet
-	Timeout int
-	Retries int
 }
 
 type TxData struct {
@@ -120,11 +116,11 @@ type NearFieldDevice struct {
 	DataQueue    chan Packet
 	StatusQueue  chan Packet
 	RxData       chan []byte
-	TimerPacket  TimerData
 	Strategy     Strategy
-	Running      bool
-	Stopped      bool
 	Started      map[string]bool
+
+	SendTime int64
+	AckTime  int64
 
 	Mutex  sync.Mutex
 	Mutex2 sync.Mutex
@@ -159,7 +155,7 @@ func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 		NodeStatuses: make(map[string]int),
 		DataQueue:    make(chan Packet, 3),
 		AckQueue:     make(chan Packet, 3),
-		StatusQueue:  make(chan Packet, 32),
+		StatusQueue:  make(chan Packet, 16),
 		RxData:       make(chan []byte, 64),
 		Started:      make(map[string]bool),
 		before:       -1,
@@ -176,7 +172,7 @@ func DevIdf(n *NearFieldDevice) bool {
 	for _, port := range portList {
 		id := fmt.Sprintf("%s:%s:%s", port.VID, port.PID, port.SerialNumber)
 		if devType, ok := DEV_LIST[id]; ok {
-			n.DevDesc = DevDesc{devType, port.Name, DEFAULT_MAC, nil}
+			n.DevDesc = DevDesc{devType, port.Name, P2P_MAC, nil}
 			return true
 		}
 	}
@@ -196,7 +192,7 @@ func (n *NearFieldDevice) Open() error {
 			n.DevDesc.MAC = xb.MAC
 			n.DevDesc.Device = xb
 			BCST_MAC = "000000000000FFFF"
-			DEFAULT_MAC = "FFFFFFFFFFFFFFFF"
+			P2P_MAC = "FFFFFFFFFFFFFFFF"
 		case BLUETOOTH:
 			// Bluetooth device initialization
 		case WIFI:
@@ -209,7 +205,7 @@ func (n *NearFieldDevice) Open() error {
 			n.DevDesc.MAC = wf.MAC
 			n.DevDesc.Device = wf
 			BCST_MAC = "1111111111"
-			DEFAULT_MAC = "1111111111"
+			P2P_MAC = "1111111111"
 		}
 	} else {
 		return errors.New("failed to identify the device type")
@@ -229,171 +225,99 @@ func (n *NearFieldDevice) Open() error {
 // 	return nil
 // }
 
+func (n *NearFieldDevice) Tx(tx TxData) bool {
+	srcMac := n.DevDesc.MAC
+
+	p := NewPacket(n.Seq, tx.TxType, srcMac, tx.DestMac, tx.Data)
+	data, err := p.Encode()
+	if err != nil {
+		logger.Debugf("encode packet error: %v", err)
+		return false
+	}
+
+	var txType string
+	needACK := false
+
+	switch tx.TxType {
+	case BCST:
+		txType = "BCST"
+	case P2P:
+		txType = "P2P"
+		needACK = true
+	case ADDR_REQ:
+		txType = "ADDR_REQ"
+		needACK = true
+	case ADDR_RESP:
+		txType = "ADDR_RESP"
+	case STATUS_REQ:
+		txType = "STATUS_REQ"
+		needACK = true
+	case STATUS_RESP:
+		txType = "STATUS_RESP"
+	case RELAY_REQ:
+		txType = "RELAY_REQ"
+		needACK = true
+	case ACK:
+		txType = "ACK"
+	default:
+		txType = "UNKNOWN"
+	}
+
+	if n.DevDesc.Device.SendPacket(data, p.DestMac) {
+		logger.Infof("send "+txType+" %v", p.String())
+		if needACK {
+			current := time.Now()
+			if n.WaitForAck(p.Seq) {
+				RTT_MAP[n.IPv4] = time.Since(current)
+				return true
+			} else {
+				logger.Warnf("a " + txType + " sent, but no ACK received")
+				return false
+			}
+		}
+		return true
+	} else {
+		logger.Warnf("send " + txType + " packet failed")
+		return false
+	}
+}
+
 func (n *NearFieldDevice) Send(tx TxData) bool {
 	n.Mutex3.Lock()
 	defer n.Mutex3.Unlock()
 
 	n.Seq = (n.Seq + 1) % 256
-	srcMac := n.DevDesc.MAC
 
-	if tx.TxType == BCST {
-		p := NewPacket(n.Seq, BCST, srcMac, BCST_MAC, tx.Data)
-		data, err := p.Encode()
-		if err != nil {
-			logger.Debugf("encode packet error: %v", err)
-			return false
-		}
-		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-			logger.Infof("send BCST %v", p.String())
-			return true
-		} else {
-			logger.Warnf("send BCST packet failed")
-			return false
-		}
-	} else if tx.TxType == STATUS_REQ {
-		p := NewPacket(n.Seq, STATUS_REQ, srcMac, tx.DestMac, tx.Data)
-		data, err := p.Encode()
-		if err != nil {
-			logger.Debugf("encode packet error: %v", err)
-			return false
-		}
-		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-			logger.Infof("send STATUS_REQ %v", p.String())
-			n.TimerPacket = TimerData{*p, RTT, 0}
-			if n.WaitForAck(p.Seq) {
-				return true
-			} else {
-				logger.Warnf("a STATUS_REQ was sent, but no STATUS_RESP was received")
-				return false
-			}
-		} else {
-			logger.Warnf("send STATUS_REQ packet failed")
-			return false
-		}
-	} else if tx.TxType == STATUS_RESP {
-		p := NewPacket(n.Seq, STATUS_RESP, n.DevDesc.MAC, tx.DestMac, tx.Data)
-		data, err := p.Encode()
-		if err != nil {
-			logger.Debugf("encode packet error: %v", err)
-			return false
-		}
-		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-			logger.Infof("send STATUS_RESP %v", p)
-			return true
-		} else {
-			logger.Warnf("send STATUS_RESP packet failed")
-			return false
-		}
-	} else if tx.TxType == RELAY_REQ {
-		p := NewPacket(n.Seq, RELAY_REQ, srcMac, tx.DestMac, tx.Data)
-		if len(n.NodeAddrs) > 0 {
-			p.DestMac = n.NodeAddrs[0]
-			data, err := p.Encode()
-			if err != nil {
-				logger.Debugf("encode packet error: %v", err)
-				return false
-			}
-			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-				logger.Infof("send RELAY_REQ %v", p.String())
-				return true
-			}
-		}
-		//for key := range n.NodeStatuses {
-		//	if n.NodeStatuses[key] == 1 {
-		//		p.DestMac = ADDR_LIST[key]
-		//		data, err := p.Encode()
-		//		if err != nil {
-		//			logger.Debugf("encode packet error: %v", err)
-		//			return false
-		//		}
-		//		if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-		//			logger.Infof("send RELAY_REQ %v", p.String())
-		//			return true
-		//		}
-		//	}
-		//}
-		logger.Warnf("send RELAY_REQ packet failed")
-		return false
-	} else {
+	if tx.TxType == P2P {
 		if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
-			p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
-			data, err := p.Encode()
-			if err != nil {
-				logger.Debugf("encode packet error: %v", err)
-				return false
-			}
-			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-				logger.Infof("send P2P %v", p.String())
-				n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
-				if n.WaitForAck(p.Seq) {
-					return true
-				} else {
-					logger.Warnf("a P2P was sent, but no ACK was received")
-					return false
-				}
-			} else {
-				logger.Warnf("send P2P packet failed")
-				return false
-			}
+			tx.DestMac = destMac
+			return n.Tx(tx)
 		} else {
-			p := NewPacket(n.Seq, ADDR_REQ, srcMac, BCST_MAC, CreateIPData(n, tx.DestIP, nil))
-			data, err := p.Encode()
-			if err != nil {
-				logger.Debugf("encode packet error: %v", err)
-				return false
-			}
-			if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-				logger.Infof("send ADDR_REQ %v", p.String())
-				n.TimerPacket = TimerData{*p, RTT, 0}
-				if n.WaitForAck(p.Seq) {
-					n.Seq = (n.Seq + 1) % 256
-					destMac = ADDR_LIST[tx.DestIP]
-					p := NewPacket(n.Seq, P2P, srcMac, destMac, tx.Data)
-					data, err := p.Encode()
-					if err != nil {
-						logger.Debugf("encode packet error: %v", err)
-						return false
-					}
-					if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-						logger.Infof("send P2P %v", p.String())
-						n.TimerPacket = TimerData{*p, RTT, MAX_RETRIES}
-						if n.WaitForAck(p.Seq) {
-							return true
-						} else {
-							logger.Warnf("a P2P was sent, but no ACK was received")
-							return false
-						}
-					} else {
-						logger.Warnf("send P2P packet failed")
-						return false
-					}
-				} else {
-					destMac = ADDR_LIST[tx.DestIP]
-					p := NewPacket(n.Seq, RELAY_REQ, srcMac, destMac, tx.Data)
-					if len(n.NodeAddrs) > 0 {
-						p.DestMac = n.NodeAddrs[0]
-						data, err := p.Encode()
-						if err != nil {
-							logger.Debugf("encode packet error: %v", err)
-							return false
-						}
-						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-							logger.Infof("send RELAY_REQ %v", p.String())
-							return true
-						} else {
-							logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
-							return false
-						}
-					} else {
-						logger.Warnf("a ADDR_REQ was sent, but no ADDR_RESP was received")
-						return false
-					}
+			for _, val := range RELAY_TABLE {
+				if tx.DestIP == val {
+					tx.TxType = RELAY_REQ
+					tx.DestMac = n.NodeAddrs[0]
+					return n.Tx(tx)
 				}
+			}
+			addrReq := TxData{CreateIPData(n, tx.DestIP, nil), tx.DestIP, BCST_MAC, ADDR_REQ}
+			if n.Tx(addrReq) {
+				n.Seq = (n.Seq + 1) % 256
+				tx.DestMac = ADDR_LIST[addrReq.DestIP]
+				return n.Tx(tx)
 			} else {
-				logger.Warnf("send ADDR_REQ packet failed")
+				tx.DestMac = n.NodeAddrs[0]
+				tx.TxType = RELAY_REQ
+				if n.Tx(tx) {
+					RELAY_TABLE = append(RELAY_TABLE, tx.DestIP)
+					return true
+				}
+				logger.Warnf("a ADDR_REQ sent, but no ADDR_RESP received")
 				return false
 			}
 		}
+	} else {
+		return n.Tx(tx)
 	}
 }
 
@@ -419,22 +343,19 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 				} else if ack.PacketType == STATUS_RESP {
 					logger.Debugf("received a STATUS_RESP for [%d]", seq)
 				}
-				n.TimerPacket.Timeout = 2147483647
 				return true
 			}
 		default:
-			if n.TimerPacket.Retries == 0 {
-				for count < RTT {
-					count++
-					time.Sleep(1 * time.Second)
-					if len(n.AckQueue) > 0 {
-						break
-					}
+			for count < TIMEOUT*10 {
+				count++
+				time.Sleep(100 * time.Millisecond)
+				if len(n.AckQueue) > 0 {
+					break
 				}
-				if count == RTT {
-					logger.Debugf("stop waiting for ack")
-					return false
-				}
+			}
+			if count == TIMEOUT*10 {
+				logger.Debugf("stop waiting for ack")
+				return false
 			}
 		}
 	}
@@ -460,18 +381,25 @@ func (n *NearFieldDevice) Receiver(ctx context.Context) {
 			return
 		default:
 			data, err := n.DevDesc.Device.ReceivePacket()
-			if err == nil {
-				p, err := DecodePacket(data)
-				if err == nil {
-					if p.PacketType == ACK || p.PacketType == ADDR_RESP {
-						n.AckQueue <- *p
-					} else if p.PacketType == STATUS_RESP {
-						n.AckQueue <- *p
-						n.StatusQueue <- *p
-					} else {
-						n.DataQueue <- *p
-					}
-				}
+			if err != nil {
+				logger.Errorf("Error receiving packet: %v", err)
+				continue
+			}
+
+			p, err := DecodePacket(data)
+			if err != nil {
+				logger.Errorf("Error decoding packet: %v", err)
+				continue
+			}
+
+			switch p.PacketType {
+			case ACK, ADDR_RESP:
+				n.AckQueue <- *p
+			case STATUS_RESP:
+				n.AckQueue <- *p
+				n.StatusQueue <- *p
+			default:
+				n.DataQueue <- *p
 			}
 		}
 	}
@@ -491,42 +419,31 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 		select {
 		case p := <-n.DataQueue:
 			SrcIP, DestIP, err := GetIP(p.Data)
-			if err == nil {
-				ADDR_LIST[SrcIP] = p.SrcMac
-				if p.PacketType == ADDR_REQ {
+			if err != nil {
+				logger.Infof("get ip address failed")
+			} else {
+				switch p.PacketType {
+				case ADDR_REQ:
 					if n.IPv4 == DestIP || n.IPv6 == DestIP {
-						p := NewPacket(p.Seq, ADDR_RESP, n.DevDesc.MAC, p.SrcMac, CreateIPData(n, SrcIP, nil))
-						data, err := p.Encode()
-						if err == nil {
-							if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-								logger.Infof("received a ADDR_REQ packet, send ADDR_RESP %v", p)
-							} else {
-								logger.Warnf("send ADDR_RESP packet failed")
-							}
-						}
+						addrResp := TxData{CreateIPData(n, SrcIP, nil), SrcIP, p.SrcMac, ADDR_RESP}
+						n.Send(addrResp)
 					}
-				} else if p.PacketType == STATUS_REQ {
+				case STATUS_REQ:
 					// If a STATUS_REQ is received from another node, send the STATUS_QUERY_REQ to the upper layer
 					deviceCh <- DeviceInfo{STATUS_QUERY_REQ, nil, p.SrcMac}
-				} else if p.PacketType == STATUS_UPDATE {
+				case STATUS_UPDATE:
 					n.NodeStatuses[SrcIP] = int(p.Data[len(p.Data)-1])
-				} else if p.PacketType == RELAY_REQ {
-					// If a RELAY_REQ is received, it is added to the RxData, and the upper layer reads it and relay it
+				default:
+					// If a P2P or RELAY_REQ received, it is added to the RxData, and the upper layer reads it or relay it.
 					n.RxData <- p.Data
-				} else {
-					n.RxData <- p.Data
-					if p.PacketType == P2P {
-						p := NewPacket(p.Seq, ACK, n.DevDesc.MAC, p.SrcMac, CreateIPData(n, SrcIP, nil))
-						data, err := p.Encode()
-						if err == nil {
-							n.DevDesc.Device.SendPacket(data, p.DestMac)
-						}
+
+					if p.PacketType == P2P || p.PacketType == RELAY_REQ {
+						ack := TxData{CreateIPData(n, SrcIP, nil), SrcIP, p.SrcMac, ACK}
+						n.Send(ack)
 					} else {
 						logger.Infof("received a BCST %v", p.String())
 					}
 				}
-			} else {
-				logger.Infof("get ip address failed")
 			}
 		case <-ctx.Done():
 			logger.Infof("PacketHandler Stopped")
@@ -534,46 +451,6 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 			n.Started["PacketHandler"] = false
 			n.Mutex2.Unlock()
 			return
-		}
-	}
-}
-
-func (n *NearFieldDevice) Timer(ctx context.Context) {
-	defer n.WG.Done()
-	n.Mutex2.Lock()
-	if !n.Started["Timer"] {
-		n.Started["Timer"] = true
-		logger.Infof("Timer Started")
-	} else {
-		return
-	}
-	n.Mutex2.Unlock()
-	for {
-		select {
-		case <-ctx.Done():
-			n.Mutex2.Lock()
-			n.Started["Timer"] = false
-			n.Mutex2.Unlock()
-			logger.Infof("Timer Stopped")
-			return
-		default:
-			n.TimerPacket.Timeout--
-			if n.TimerPacket.Timeout == 0 {
-				if n.TimerPacket.Retries > 0 {
-					p := n.TimerPacket.Packet
-					data, err := p.Encode()
-					if err == nil {
-						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-							logger.Debugf("send RT %v", p.String())
-							n.TimerPacket.Timeout = RTT
-						} else {
-							logger.Debugf("send RT packet failed")
-						}
-					}
-					n.TimerPacket.Retries--
-				}
-			}
-			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -680,13 +557,33 @@ func (n *NearFieldDevice) ConfigHandler(ctx context.Context, configCh chan Confi
 				tx := TxData{CreateIPData(n, DEFAULT_IPv4, []byte{byte(config.Status)}), "", config.SrcMac, STATUS_RESP}
 				n.Send(tx)
 			} else if config.Type == STATUS_UPDATE_NOTIFY {
-				tx := TxData{CreateIPData(n, BCST_IP, []byte{byte(config.Status)}), "", BCST_MAC, STATUS_UPDATE}
+				tx := TxData{CreateIPData(n, BCST_IPv4, []byte{byte(config.Status)}), "", BCST_MAC, STATUS_UPDATE}
 				n.Send(tx)
 			}
 		default:
 			// DO NOTHING
 		}
 	}
+}
+
+func (n *NearFieldDevice) GetLatestRTT() map[string]time.Duration {
+	res := make(map[string]time.Duration)
+	for key, value := range RTT_MAP {
+		res[key] = value
+	}
+	return res
+}
+
+func (n *NearFieldDevice) GetMacAddress() string {
+	if mac := n.DevDesc.MAC; mac != P2P_MAC {
+		return mac
+	} else {
+		return "UNKNOWN"
+	}
+}
+
+func (n *NearFieldDevice) BatchSize() (int, error) {
+	return n.Strategy.BatchSize, nil
 }
 
 func (n *NearFieldDevice) Init(s Strategy) error {
@@ -698,6 +595,7 @@ func (n *NearFieldDevice) Init(s Strategy) error {
 		logger.Warnf(err.Error())
 		return err
 	}
+	RTT_MAP[n.IPv4] = time.Duration(0)
 	logger.Infof("Initialize finished")
 	return nil
 }
@@ -709,23 +607,11 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 	}
 	n.context, n.cancel = context.WithCancel(ctx)
 	n.DevDesc.Device.Start(n.context)
-	n.WG.Add(5)
+	n.WG.Add(3)
 	go n.Receiver(n.context)
 	go n.PacketHandler(n.context, devInfo)
-	go n.Timer(n.context)
-	//go n.ConfigHandler(n.context, configInfo, devInfo)
 	go n.NodeDetector(n.context)
-	return nil
-}
-
-func (n *NearFieldDevice) Stop() error {
-	if n.DevDesc.Device == nil {
-		logger.Warnf("Please initialize device first")
-		return errors.New("stop failed")
-	}
-	n.DevDesc.Device.Stop()
-	n.cancel()
-	n.WG.Wait()
+	//go n.ConfigHandler(n.context, configInfo, devInfo)
 	return nil
 }
 
@@ -742,18 +628,11 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	tx_type := P2P
-	if destIP == BCST_IP {
-		tx_type = BCST
+	txType := P2P
+	if destIP == BCST_IPv4 {
+		txType = BCST
 	}
-	//else if len(n.NodeAddrs) > 0 && len(ADDR_LIST) > 0 {
-	// If the ADDR_LIST contains all nodes in the current network,
-	// but the destination IP address of the packet is not in it,
-	// the packet is considered to be of the RELAY_REQ type,
-	// which needs to be relayed to server by other nodes.
-	//tx_type = RELAY_REQ
-	//}
-	tx := TxData{data, destIP, "", tx_type}
+	tx := TxData{data, destIP, "", txType}
 	if !n.Send(tx) {
 		return 0, errors.New("send packet failed")
 	}
@@ -761,6 +640,13 @@ func (n *NearFieldDevice) Write(buf []byte) (int, error) {
 	return size, nil
 }
 
-func (n *NearFieldDevice) BatchSize() (int, error) {
-	return n.Strategy.BatchSize, nil
+func (n *NearFieldDevice) Stop() error {
+	if n.DevDesc.Device == nil {
+		logger.Warnf("Please initialize device first")
+		return errors.New("stop failed")
+	}
+	n.DevDesc.Device.Stop()
+	n.cancel()
+	n.WG.Wait()
+	return nil
 }

@@ -4,9 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func myPrint(bs []byte) {
@@ -106,79 +109,83 @@ func CreateIPData(n *NearFieldDevice, dest string, bs []byte) []byte {
 	}
 }
 
-// func GetIPData(packet []byte) ([]byte, error) {
-// 	version := packet[0] / 16
-// 	if version == 4 {
-// 		return packet[20:], nil
-// 	} else if version == 6 {
-// 		return packet[40:], nil
-// 	} else {
-// 		return nil, errors.New("wrong packet version")
-// 	}
-// }
+func GetIPData(srcIP []byte, dstIP []byte, msg []byte) []byte {
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{}
+	gopacket.SerializeLayers(buf, opts,
+		&layers.IPv4{
+			SrcIP: net.IPv4(srcIP[0], srcIP[1], srcIP[2], srcIP[3]),
+			DstIP: net.IPv4(dstIP[0], dstIP[1], dstIP[2], dstIP[3]),
+		},
+		gopacket.Payload(msg))
+	data := buf.Bytes()
+	data[0] = (4 << 4)
+	return data
+}
 
-// func Ping(hostname string, msg []byte) ([]byte, error) {
-// 	ipAddr, err := net.ResolveIPAddr("ip4", hostname)
-// 	if err != nil {
-// 		logger.Warnf("Error resolving IP address:", err)
-// 		return nil, err
-// 	}
+func Ping(hostname string, msg []byte) ([]byte, error) {
+	ipAddr, err := net.ResolveIPAddr("ip4", hostname)
+	if err != nil {
+		logger.Warnf("Error resolving IP address:", err)
+		return nil, err
+	}
 
-// 	conn, err := net.DialIP("ip4:icmp", nil, ipAddr)
-// 	if err != nil {
-// 		logger.Warnf("Error creating ICMP connection:", err)
-// 		return nil, err
-// 	}
-// 	defer conn.Close()
+	conn, err := net.DialIP("ip4:icmp", nil, ipAddr)
+	if err != nil {
+		logger.Warnf("Error creating ICMP connection:", err)
+		return nil, err
+	}
+	defer conn.Close()
 
-// 	start := time.Now()
-// 	_, err = conn.Write(msg)
-// 	if err != nil {
-// 		logger.Warnf("Error sending ICMP message:", err)
-// 		return nil, err
-// 	}
+	start := time.Now()
+	_, err = conn.Write(msg)
+	if err != nil {
+		logger.Warnf("Error sending ICMP message:", err)
+		return nil, err
+	}
 
-// 	reply := make([]byte, len(msg))
-// 	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3))
-// 	if err != nil {
-// 		logger.Warnf("Error setting read deadline:", err)
-// 		return nil, err
-// 	}
-// 	_, err = conn.Read(reply)
-// 	if err != nil {
-// 		logger.Warnf("Error reading ICMP reply:", err)
-// 		return nil, err
-// 	}
+	reply := make([]byte, len(msg))
+	err = conn.SetReadDeadline(time.Now().Add(time.Second * 3))
+	if err != nil {
+		logger.Warnf("Error setting read deadline:", err)
+		return nil, err
+	}
+	num, err := conn.Read(reply)
+	logger.Info(num)
+	if err != nil {
+		logger.Warnf("Error reading ICMP reply:", err)
+		return nil, err
+	}
 
-// 	duration := time.Since(start)
-// 	logger.Infof("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
-// 	return reply, nil
-// }
+	duration := time.Since(start)
+	logger.Infof("Ping %s (%s): %d bytes, time=%s\n", hostname, ipAddr, len(reply), duration)
+	return reply, nil
+}
 
-// func GetMsg() []byte {
-// 	msg := make([]byte, 48)
-// 	msg[0] = 8
-// 	msg[1] = 0
-// 	msg[2] = 0
-// 	msg[3] = 0
-// 	msg[4] = 0
-// 	msg[5] = 13
-// 	msg[6] = 0
-// 	msg[7] = 37
+func GetMsg() []byte {
+	msg := make([]byte, 48)
+	msg[0] = 8
+	msg[1] = 0
+	msg[2] = 0
+	msg[3] = 0
+	msg[4] = 0
+	msg[5] = 13
+	msg[6] = 0
+	msg[7] = 37
 
-// 	checksum := checkSum(msg)
-// 	msg[2] = byte(checksum >> 8)
-// 	msg[3] = byte(checksum)
+	checksum := checkSum(msg)
+	msg[2] = byte(checksum >> 8)
+	msg[3] = byte(checksum)
 
-// 	return msg
-// }
+	return msg
+}
 
-// func checkSum(msg []byte) uint16 {
-// 	sum := 0
-// 	for i := 0; i < len(msg)-1; i += 2 {
-// 		sum += int(msg[i])*256 + int(msg[i+1])
-// 	}
-// 	sum = (sum >> 16) + (sum & 0xffff)
-// 	sum += sum >> 16
-// 	return uint16(^sum)
-// }
+func checkSum(msg []byte) uint16 {
+	sum := 0
+	for i := 0; i < len(msg)-1; i += 2 {
+		sum += int(msg[i])*256 + int(msg[i+1])
+	}
+	sum = (sum >> 16) + (sum & 0xffff)
+	sum += sum >> 16
+	return uint16(^sum)
+}
