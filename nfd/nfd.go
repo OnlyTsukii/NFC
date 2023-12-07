@@ -126,6 +126,7 @@ type NearFieldDevice struct {
 	Mutex2 sync.Mutex
 	Mutex3 sync.Mutex
 	Mutex4 sync.Mutex
+	Mutex5 sync.Mutex
 	WG     sync.WaitGroup
 
 	before    int
@@ -268,7 +269,9 @@ func (n *NearFieldDevice) Tx(tx TxData) bool {
 		if needACK {
 			current := time.Now()
 			if n.WaitForAck(p.Seq) {
+				n.Mutex5.Lock()
 				RTT_MAP[n.IPv4] = time.Since(current)
+				n.Mutex5.Unlock()
 				return true
 			} else {
 				logger.Warnf("a " + txType + " sent, but no ACK received")
@@ -568,9 +571,11 @@ func (n *NearFieldDevice) ConfigHandler(ctx context.Context, configCh chan Confi
 
 func (n *NearFieldDevice) GetLatestRTT() map[string]time.Duration {
 	res := make(map[string]time.Duration)
+	n.Mutex5.Lock()
 	for key, value := range RTT_MAP {
 		res[key] = value
 	}
+	n.Mutex5.Unlock()
 	return res
 }
 
