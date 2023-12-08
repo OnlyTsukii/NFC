@@ -41,7 +41,7 @@ const (
 	SERACH_NODES_RESP    = 3
 	STATUS_UPDATE_NOTIFY = 4
 
-	TIMEOUT = 10
+	TIMEOUT = 5
 
 	BCST_IPv4    = "255.255.255.255"
 	DEFAULT_IPv4 = "192.168.101.128"
@@ -62,7 +62,7 @@ var (
 
 	RTT_MAP = map[string]time.Duration{}
 
-	RELAY_TABLE = []string{}
+	//RELAY_TABLE = []string{}
 
 	BCST_MAC = ""
 	P2P_MAC  = ""
@@ -119,9 +119,7 @@ type NearFieldDevice struct {
 	RxData       chan []byte
 	Strategy     Strategy
 	Started      map[string]bool
-
-	SendTime int64
-	AckTime  int64
+	ServerAddr   string
 
 	Mutex  sync.Mutex
 	Mutex2 sync.Mutex
@@ -304,12 +302,10 @@ func (n *NearFieldDevice) Send(tx TxData, nextSeq int) bool {
 			tx.DestMac = destMac
 			return n.Tx(tx, nextSeq)
 		} else {
-			for _, val := range RELAY_TABLE {
-				if tx.DestIP == val {
-					tx.TxType = RELAY_REQ
-					tx.DestMac = n.NodeAddrs[0]
-					return n.Tx(tx, nextSeq)
-				}
+			if tx.DestIP == n.ServerAddr {
+				tx.TxType = RELAY_REQ
+				tx.DestMac = n.NodeAddrs[0]
+				return n.Tx(tx, nextSeq)
 			}
 			addrReq := TxData{CreateIPData(n, tx.DestIP, nil), tx.DestIP, BCST_MAC, ADDR_REQ}
 			if n.Tx(addrReq, nextSeq) {
@@ -319,7 +315,7 @@ func (n *NearFieldDevice) Send(tx TxData, nextSeq int) bool {
 				tx.DestMac = n.NodeAddrs[0]
 				tx.TxType = RELAY_REQ
 				if n.Tx(tx, nextSeq) {
-					RELAY_TABLE = append(RELAY_TABLE, tx.DestIP)
+					n.ServerAddr = tx.DestIP
 					return true
 				}
 				logger.Warnf("a ADDR_REQ sent, but no ADDR_RESP received")
@@ -342,7 +338,7 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 					if ack.Seq != n.before {
 						logger.Infof("received a ACK for [%v]", seq)
 						n.ack_count++
-						logger.Infof("count: %d", n.ack_count)
+						//logger.Infof("count: %d", n.ack_count)
 						n.before = ack.Seq
 					}
 				} else if ack.PacketType == ADDR_RESP {
