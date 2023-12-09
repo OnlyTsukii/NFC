@@ -638,9 +638,13 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 }
 
 func (n *NearFieldDevice) Read(buf []byte) (size int, err error) {
-	data := <-n.RxData
-	size = copy(buf, data)
-	return size, err
+	select {
+	case data := <-n.RxData:
+		size = copy(buf, data)
+		return size, nil
+	default:
+		return 0, nil
+	}
 }
 
 func (n *NearFieldDevice) Write(buf []byte) (int, error) {
