@@ -15,6 +15,7 @@ import (
 
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -46,6 +47,8 @@ const (
 	BCST_IPv4    = "255.255.255.255"
 	DEFAULT_IPv4 = "192.168.101.128"
 	DEFAULT_IPv6 = "fe80::1"
+
+	VIRTUAL_IP_PREFIX = "192.168.101."
 )
 
 var (
@@ -296,6 +299,10 @@ func (n *NearFieldDevice) Tx(tx TxData, nextSeq int) bool {
 func (n *NearFieldDevice) Send(tx TxData, nextSeq int) bool {
 	n.Mutex3.Lock()
 	defer n.Mutex3.Unlock()
+
+	if !strings.HasPrefix(tx.DestIP, VIRTUAL_IP_PREFIX) {
+		return false
+	}
 
 	if tx.TxType == P2P {
 		if destMac, ok := ADDR_LIST[tx.DestIP]; ok {
