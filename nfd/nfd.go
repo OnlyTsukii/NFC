@@ -159,7 +159,7 @@ func NewNearFieldDevice(ipv4 string, ipv6 string) *NearFieldDevice {
 		DataQueue:    make(chan Packet, 10),
 		AckQueue:     make(chan Packet, 10),
 		StatusQueue:  make(chan Packet, 10),
-		RxData:       make(chan []byte, 32),
+		RxData:       make(chan []byte, 128),
 		Started:      make(map[string]bool),
 		before:       -1,
 
@@ -638,13 +638,9 @@ func (n *NearFieldDevice) Run(ctx context.Context, configInfo chan ConfigInfo, d
 }
 
 func (n *NearFieldDevice) Read(buf []byte) (size int, err error) {
-	select {
-	case data := <-n.RxData:
-		size = copy(buf, data)
-		return size, nil
-	default:
-		return 0, nil
-	}
+	data := <-n.RxData
+	size = copy(buf, data)
+	return size, err
 }
 
 func (n *NearFieldDevice) Write(buf []byte) (int, error) {
