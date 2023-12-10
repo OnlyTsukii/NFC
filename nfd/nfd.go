@@ -591,6 +591,7 @@ func (n *NearFieldDevice) GetLatestRTT() map[string]time.Duration {
 	n.Mutex5.Lock()
 	for key, value := range RTT_MAP {
 		res[key] = value
+		RTT_MAP[key] = time.Duration(0)
 	}
 	n.Mutex5.Unlock()
 	return res
