@@ -278,7 +278,7 @@ func (n *NearFieldDevice) Tx(tx TxData, nextSeq int) bool {
 	if n.DevDesc.Device.SendPacket(data, p.DestMac) {
 		logger.Debugf("send "+txType+" %v", p.String())
 		if needACK {
-			logger.Debugf("send data: %v", p.Data)
+			//logger.Debugf("send data: %v", p.Data)
 			current := time.Now()
 			if n.WaitForAck(p.Seq) {
 				n.Mutex5.Lock()
@@ -452,7 +452,7 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 					n.RxData <- p.Data
 
 					if p.PacketType == P2P || p.PacketType == RELAY_REQ {
-						logger.Debugf("recv data: %v", p.Data)
+						//logger.Debugf("recv data: %v", p.Data)
 						p := NewPacket(p.Seq, ACK, n.DevDesc.MAC, p.SrcMac, CreateIPData(n, SrcIP, nil))
 						data, err := p.Encode()
 						if err != nil {
