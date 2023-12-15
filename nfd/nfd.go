@@ -276,7 +276,7 @@ func (n *NearFieldDevice) Tx(tx TxData, nextSeq int) bool {
 	}
 
 	if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-		logger.Infof("send "+txType+" %v", p.String())
+		logger.Debugf("send "+txType+" %v", p.String())
 		if needACK {
 			current := time.Now()
 			if n.WaitForAck(p.Seq) {
@@ -285,13 +285,13 @@ func (n *NearFieldDevice) Tx(tx TxData, nextSeq int) bool {
 				n.Mutex5.Unlock()
 				return true
 			} else {
-				logger.Warnf("a " + txType + " sent, but no ACK received")
+				logger.Debugf("a " + txType + " sent, but no ACK received")
 				return false
 			}
 		}
 		return true
 	} else {
-		logger.Warnf("send " + txType + " packet failed")
+		logger.Debugf("send " + txType + " packet failed")
 		return false
 	}
 }
@@ -325,7 +325,7 @@ func (n *NearFieldDevice) Send(tx TxData, nextSeq int) bool {
 					n.ServerAddr = tx.DestIP
 					return true
 				}
-				logger.Warnf("a ADDR_REQ sent, but no ADDR_RESP received")
+				logger.Debugf("a ADDR_REQ sent, but no ADDR_RESP received")
 				return false
 			}
 			return false
@@ -343,7 +343,7 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 			if ack.Seq == seq {
 				if ack.PacketType == ACK {
 					if ack.Seq != n.before {
-						logger.Infof("received a ACK for [%v]", seq)
+						logger.Debugf("received a ACK for [%v]", seq)
 						n.ack_count++
 						//logger.Infof("count: %d", n.ack_count)
 						n.before = ack.Seq
@@ -353,9 +353,9 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 					if err == nil {
 						ADDR_LIST[srcIP] = ack.SrcMac
 					}
-					logger.Infof("received a ADDR_RESP for [%d]", seq)
+					logger.Debugf("received a ADDR_RESP for [%d]", seq)
 				} else if ack.PacketType == STATUS_RESP {
-					logger.Infof("received a STATUS_RESP for [%d]", seq)
+					logger.Debugf("received a STATUS_RESP for [%d]", seq)
 				}
 				return true
 			}
@@ -401,7 +401,7 @@ func (n *NearFieldDevice) Receiver(ctx context.Context) {
 
 			p, err := DecodePacket(data)
 			if err != nil {
-				logger.Errorf("Error decoding packet: %v", err)
+				logger.Debugf("Error decoding packet: %v", err)
 				continue
 			}
 
@@ -433,7 +433,7 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 		case p := <-n.DataQueue:
 			SrcIP, DestIP, err := GetIP(p.Data)
 			if err != nil {
-				logger.Infof("get ip address failed")
+				logger.Debugf("get ip address failed")
 			} else {
 				switch p.PacketType {
 				case ADDR_REQ:
@@ -458,10 +458,10 @@ func (n *NearFieldDevice) PacketHandler(ctx context.Context, deviceCh chan Devic
 							continue
 						}
 						if n.DevDesc.Device.SendPacket(data, p.DestMac) {
-							logger.Infof("send ACK %v", p.String())
+							logger.Debugf("send ACK %v", p.String())
 						}
 					} else {
-						logger.Infof("received a BCST %v", p.String())
+						logger.Debugf("received a BCST %v", p.String())
 					}
 				}
 			}
@@ -499,12 +499,12 @@ func (n *NearFieldDevice) NodeDetector(ctx context.Context) {
 			if err == nil {
 				n.Mutex4.Lock()
 				if len(addrs) != 0 {
-					logger.Infof("found %d nodes: %v", len(addrs), addrs)
+					logger.Debugf("found %d nodes: %v", len(addrs), addrs)
 					n.NodeAddrs = addrs
 				}
 				n.Mutex4.Unlock()
 			} else {
-				logger.Warnf("get nodes error: %v", err)
+				logger.Debugf("get nodes error: %v", err)
 			}
 		}
 	}
@@ -542,7 +542,7 @@ func (n *NearFieldDevice) UpdateStatus() {
 			}
 		}
 		n.Mutex.Unlock()
-		logger.Infof("Nodes status %v", n.NodeStatuses)
+		logger.Debugf("Nodes status %v", n.NodeStatuses)
 		return
 	}
 }
