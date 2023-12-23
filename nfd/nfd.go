@@ -42,7 +42,7 @@ const (
 	SERACH_NODES_RESP    = 3
 	STATUS_UPDATE_NOTIFY = 4
 
-	TIMEOUT = 10
+	TIMEOUT = 5
 
 	BCST_IPv4    = "255.255.255.255"
 	DEFAULT_IPv4 = "192.168.101.128"
@@ -593,7 +593,7 @@ func (n *NearFieldDevice) GetLatestRTT() map[string]time.Duration {
 	n.Mutex5.Lock()
 	for key, value := range RTT_MAP {
 		res[key] = value
-		RTT_MAP[key] = time.Duration(0)
+		//RTT_MAP[key] = time.Duration(0)
 	}
 	n.Mutex5.Unlock()
 	return res
