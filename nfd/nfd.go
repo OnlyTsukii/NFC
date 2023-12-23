@@ -346,7 +346,6 @@ func (n *NearFieldDevice) WaitForAck(seq int) bool {
 					if ack.Seq != n.before {
 						logger.Debugf("received a ACK for [%v]", seq)
 						n.ack_count++
-						//logger.Infof("count: %d", n.ack_count)
 						n.before = ack.Seq
 					}
 				} else if ack.PacketType == ADDR_RESP {
